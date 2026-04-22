@@ -19,6 +19,40 @@ Stack de détection : **DeepStream 7 / PeopleNet v2.6 / NvDCF**
 
 ---
 
+## Comparaison des stacks de détection
+
+### Performance et complexité
+
+| Critère | `feature/yolo` | `feature/nanoowl` | `feature/deepstream` |
+| --- | --- | --- | --- |
+| FPS (Jetson Orin) | ~30 (PyTorch) / ~60 (TRT) | ~8-15 | le plus élevé (pipeline GPU INT8) |
+| Démarrage à froid | immédiat | construction moteur TRT (~15 min) | compilation moteur (~5 min) |
+| Complexité du code | faible (Python + OpenCV) | moyenne (Python + OpenCV + HF) | élevée (GStreamer + DeepStream + pyds) |
+| Accès caméra | OpenCV `VideoCapture` | OpenCV `VideoCapture` | GStreamer `v4l2src` (exclusif) |
+
+### Détection et tracking
+
+| Critère | `feature/yolo` | `feature/nanoowl` | `feature/deepstream` |
+| --- | --- | --- | --- |
+| Modèle | YOLOv8n (COCO) | OWL-ViT base patch32 | PeopleNet v2.6 (ResNet34) |
+| Vocabulaire | fixe — classe `person` (COCO) | **ouvert — prompt texte libre** | fixe — `person / bag / face` |
+| Réentraînement | non | **non** (prompt suffisant) | non |
+| Tracker | ByteTrack (intégré Ultralytics) | IoU greedy (minimal) | **NvDCF (production, robuste aux occlusions)** |
+| Précision piétons | bonne | variable selon threshold | **optimisée** (modèle dédié) |
+
+### Quand choisir quelle branche
+
+**`feature/yolo`** — le point de départ naturel.
+Déploiement immédiat, écosystème bien documenté, performances suffisantes pour la majorité des installations. Exporter le moteur TensorRT (`export_tensorrt.py`) pour doubler les FPS en production.
+
+**`feature/nanoowl`** — si le vocabulaire "personne" ne suffit pas.
+Permet de détecter par description textuelle sans réentraîner de modèle : `"a person in a hard hat"`, `"a security agent"`, etc. Contrepartie : FPS plus faible et étape de build obligatoire avant le premier démarrage.
+
+**`feature/deepstream`** — pour la production et la haute fiabilité.
+Pipeline entièrement GPU (GStreamer + TensorRT INT8), modèle PeopleNet spécialement entraîné pour la détection de piétons, tracker NvDCF robuste aux occultations partielles. Architecture plus complexe, mais la plus proche d'un déploiement industriel.
+
+---
+
 ## Fonctionnalités
 
 - Comptage entrées / sorties par ligne virtuelle (PeopleNet + tracker NvDCF)
@@ -42,7 +76,7 @@ Stack de détection : **DeepStream 7 / PeopleNet v2.6 / NvDCF**
 
 ## Structure du projet
 
-```
+```text
 people-counter/
 ├── docker-compose.yml
 ├── app/
