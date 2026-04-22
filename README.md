@@ -3,17 +3,19 @@
 Système de comptage de personnes et de surveillance de porte par caméra USB,
 déployé en conteneurs Docker sur ASUS IoT PE1103N (NVIDIA Jetson Orin, JetPack 6.x).
 
+Stack de détection : **YOLOv8n + ByteTrack (Ultralytics)**
+
 ---
 
 ## Branches
 
 | Branche | Stack de détection | Image Docker |
 | --- | --- | --- |
-| `feature/yolo` | YOLOv8n + ByteTrack (Ultralytics) | `ultralytics/ultralytics:latest-jetson-jetpack6` |
+| **`feature/yolo`** | **YOLOv8n + ByteTrack (Ultralytics)** | **`ultralytics/ultralytics:latest-jetson-jetpack6`** |
 | `feature/nanoowl` | OWL-ViT TensorRT + tracker IoU (NanoOWL) | `dustynv/nanoowl:r36.4.0` |
 | `feature/deepstream` | PeopleNet v2.6 + NvDCF (DeepStream 7) | `nvcr.io/nvidia/deepstream:7.0-samples` |
 
-`main` est la branche d'intégration : elle contient le code partagé (détection porte, base de données, dashboard Grafana). Merger une branche `feature/*` pour obtenir une stack complète et déployable.
+`main` est la branche d'intégration neutre (code partagé uniquement).
 
 ---
 
@@ -51,10 +53,10 @@ Pipeline entièrement GPU (GStreamer + TensorRT INT8), modèle PeopleNet spécia
 
 ---
 
-## Fonctionnalités communes
+## Fonctionnalités
 
+- Comptage entrées / sorties par ligne virtuelle (YOLOv8n + ByteTrack)
 - Détection visuelle de l'état de la porte (ouverte / fermée) par différence de frames
-- Comptage entrées / sorties par ligne virtuelle
 - Persistance des événements dans SQLite
 - Dashboard Grafana temps réel (rafraîchissement 5s)
 - Alertes email : porte ouverte > 5 min, salle en suroccupation
@@ -78,36 +80,23 @@ Pipeline entièrement GPU (GStreamer + TensorRT INT8), modèle PeopleNet spécia
 people-counter/
 ├── docker-compose.yml
 ├── app/
-│   └── main.py                # code partagé (détection porte, base de données)
+│   ├── main.py                # pipeline principal YOLOv8 + ByteTrack
+│   ├── reset_reference.py     # recapture frame de référence porte
+│   └── export_tensorrt.py     # export moteur TensorRT (optionnel)
 └── grafana/
     └── provisioning/
-        ├── datasources/
-        │   └── sqlite.yaml
+        ├── datasources/sqlite.yaml
         ├── dashboards/
         │   ├── dashboard.yaml
         │   └── people_counter.json
-        └── alerting/
-            └── door_alert.yaml
+        └── alerting/door_alert.yaml
 ```
 
 ---
 
 ## Installation
 
-### 1. Choisir une branche feature
-
-```bash
-# Stack YOLOv8 + ByteTrack
-git checkout feature/yolo
-
-# Stack NanoOWL (OWL-ViT TensorRT)
-git checkout feature/nanoowl
-
-# Stack DeepStream / PeopleNet / NvDCF
-git checkout feature/deepstream
-```
-
-### 2. Vérifier le runtime NVIDIA
+### 1. Vérifier le runtime NVIDIA
 
 ```bash
 sudo nvidia-ctk runtime configure --runtime=docker --set-as-default
@@ -116,12 +105,28 @@ cat /etc/docker/daemon.json
 # doit contenir : "default-runtime": "nvidia"
 ```
 
-### 3. Vérifier l'accès à la caméra
+### 2. Vérifier l'accès à la caméra
 
 ```bash
 ls -la /dev/video0
 sudo usermod -aG video $USER
 # se déconnecter / reconnecter pour appliquer le groupe
+```
+
+### 3. Valider le GPU dans le conteneur
+
+```bash
+docker run --rm --runtime nvidia --device /dev/video0 \
+  ultralytics/ultralytics:latest-jetson-jetpack6 \
+  python3 -c "
+import torch, cv2
+print('CUDA:', torch.cuda.is_available())
+print('GPU :', torch.cuda.get_device_name(0))
+cap = cv2.VideoCapture(0)
+print('Cam :', cap.isOpened())
+cap.release()
+"
+# attendu : CUDA: True | GPU: Orin | Cam: True
 ```
 
 ### 4. Démarrer la stack
@@ -132,6 +137,8 @@ docker compose up -d
 ```
 
 Grafana est accessible sur `http://<ip-du-pe1103n>:3000`
+
+Le plugin SQLite est installé automatiquement au premier démarrage (~30s).
 
 ---
 
@@ -157,7 +164,25 @@ Coordonnées en fractions de l'image `(x1, y1, x2, y2)`.
 DOOR_ROI = (0.2, 0.1, 0.8, 0.9)  # valeur par défaut
 ```
 
-Une image de vérification `/data/roi_check.png` est générée automatiquement au démarrage par chaque branche feature (rectangle vert = ROI porte, ligne rouge = ligne de comptage). Consulter le README de la branche concernée pour la procédure de recapture.
+Pour vérifier visuellement la zone :
+
+```bash
+docker compose exec app python3 -c "
+import cv2
+cap = cv2.VideoCapture(0)
+_, frame = cap.read()
+cap.release()
+h, w = frame.shape[:2]
+roi = (0.2, 0.1, 0.8, 0.9)
+cv2.rectangle(frame,
+  (int(roi[0]*w), int(roi[1]*h)),
+  (int(roi[2]*w), int(roi[3]*h)),
+  (0,255,0), 2)
+cv2.imwrite('/data/roi_check.png', frame)
+"
+```
+
+Récupérer `/data/roi_check.png` et vérifier que le rectangle vert encadre bien le battant.
 
 ### Sensibilité détection porte (`DOOR_THRESHOLD`)
 
@@ -207,7 +232,34 @@ addresses: admin@votredomaine.com
 
 ---
 
+## Performance optionnelle : export TensorRT
+
+Gain de 2-3× en débit d'inférence. À faire une seule fois.
+
+```bash
+docker compose exec app python /app/export_tensorrt.py
+```
+
+Puis modifier `MODEL_PATH` dans `app/main.py` :
+
+```python
+MODEL_PATH = "/data/yolov8n.engine"
+```
+
+```bash
+docker compose restart app
+```
+
+---
+
 ## Maintenance
+
+### Recapturer la frame de référence (porte fermée)
+
+```bash
+# Assurez-vous que la porte est fermée avant de lancer
+docker compose exec app python /app/reset_reference.py
+```
 
 ### Vérifier les logs
 
@@ -228,8 +280,8 @@ docker compose exec dashboard \
 
 ```bash
 # crontab -e
-0 3 * * 0 docker compose -f /chemin/vers/docker-compose.yml exec -T app \
-  python3 -c "import sqlite3; sqlite3.connect('/data/counts.db').execute('VACUUM')"
+0 3 * * 0 docker compose -f /chemin/vers/docker-compose.yml exec -T dashboard \
+  sqlite3 /data/counts.db "VACUUM"
 ```
 
 ### Vérifier la persistance après reboot
