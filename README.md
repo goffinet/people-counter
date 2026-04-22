@@ -11,6 +11,7 @@ déployé en conteneurs Docker sur ASUS IoT PE1103N (NVIDIA Jetson Orin, JetPack
 | --- | --- | --- |
 | `feature/yolo` | YOLOv8n + ByteTrack (Ultralytics) | `ultralytics/ultralytics:latest-jetson-jetpack6` |
 | `feature/nanoowl` | OWL-ViT TensorRT + tracker IoU (NanoOWL) | `dustynv/nanoowl:r36.4.0` |
+| `feature/deepstream` | PeopleNet v2.6 + NvDCF (DeepStream 7) | `nvcr.io/nvidia/deepstream:7.0-samples` |
 
 `main` est la branche d'intégration : elle contient le code partagé (détection porte, base de données, dashboard Grafana). Merger une branche `feature/*` pour obtenir une stack complète et déployable.
 
@@ -29,7 +30,7 @@ déployé en conteneurs Docker sur ASUS IoT PE1103N (NVIDIA Jetson Orin, JetPack
 ## Prérequis
 
 | Élément | Version requise |
-|---|---|
+| --- | --- |
 | ASUS IoT PE1103N | JetPack 6.x (L4T r36.x) |
 | Docker Engine | ≥ 24 |
 | NVIDIA Container Toolkit | ≥ 1.14 |
@@ -68,6 +69,9 @@ git checkout feature/yolo
 
 # Stack NanoOWL (OWL-ViT TensorRT)
 git checkout feature/nanoowl
+
+# Stack DeepStream / PeopleNet / NvDCF
+git checkout feature/deepstream
 ```
 
 ### 2. Vérifier le runtime NVIDIA
@@ -233,7 +237,7 @@ docker compose ps   # doit afficher "running" pour app et dashboard
 ## Dépannage
 
 | Symptôme | Solution |
-|---|---|
+| --- | --- |
 | `CUDA: False` dans le conteneur | Vérifier `--runtime nvidia` et `daemon.json` |
 | Caméra non détectée | Vérifier droits groupe `video` et `devices:` dans compose |
 | Fausses alarmes porte | Augmenter `DOOR_THRESHOLD` ou recapturer la référence |
