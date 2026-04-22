@@ -3,7 +3,7 @@
 Système de comptage de personnes et de surveillance de porte par caméra USB,
 déployé en conteneurs Docker sur ASUS IoT PE1103N (NVIDIA Jetson Orin, JetPack 6.x).
 
-Stack de détection : **NanoOWL / OWL-ViT TensorRT / tracker IoU**
+Stack de détection : **YOLOv8n + ByteTrack (Ultralytics)**
 
 ---
 
@@ -11,18 +11,51 @@ Stack de détection : **NanoOWL / OWL-ViT TensorRT / tracker IoU**
 
 | Branche | Stack de détection | Image Docker |
 | --- | --- | --- |
-| `feature/yolo` | YOLOv8n + ByteTrack (Ultralytics) | `ultralytics/ultralytics:latest-jetson-jetpack6` |
-| **`feature/nanoowl`** | **OWL-ViT TensorRT + tracker IoU (NanoOWL)** | **`dustynv/nanoowl:r36.4.0`** |
+| **`feature/yolo`** | **YOLOv8n + ByteTrack (Ultralytics)** | **`ultralytics/ultralytics:latest-jetson-jetpack6`** |
+| `feature/nanoowl` | OWL-ViT TensorRT + tracker IoU (NanoOWL) | `dustynv/nanoowl:r36.4.0` |
 | `feature/deepstream` | PeopleNet v2.6 + NvDCF (DeepStream 7) | `nvcr.io/nvidia/deepstream:7.0-samples` |
 
 `main` est la branche d'intégration neutre (code partagé uniquement).
 
 ---
 
+## Comparaison des stacks de détection
+
+### Performance et complexité
+
+| Critère | `feature/yolo` | `feature/nanoowl` | `feature/deepstream` |
+| --- | --- | --- | --- |
+| FPS (Jetson Orin) | ~30 (PyTorch) / ~60 (TRT) | ~8-15 | le plus élevé (pipeline GPU INT8) |
+| Démarrage à froid | immédiat | construction moteur TRT (~15 min) | compilation moteur (~5 min) |
+| Complexité du code | faible (Python + OpenCV) | moyenne (Python + OpenCV + HF) | élevée (GStreamer + DeepStream + pyds) |
+| Accès caméra | OpenCV `VideoCapture` | OpenCV `VideoCapture` | GStreamer `v4l2src` (exclusif) |
+
+### Détection et tracking
+
+| Critère | `feature/yolo` | `feature/nanoowl` | `feature/deepstream` |
+| --- | --- | --- | --- |
+| Modèle | YOLOv8n (COCO) | OWL-ViT base patch32 | PeopleNet v2.6 (ResNet34) |
+| Vocabulaire | fixe — classe `person` (COCO) | **ouvert — prompt texte libre** | fixe — `person / bag / face` |
+| Réentraînement | non | **non** (prompt suffisant) | non |
+| Tracker | ByteTrack (intégré Ultralytics) | IoU greedy (minimal) | **NvDCF (production, robuste aux occlusions)** |
+| Précision piétons | bonne | variable selon threshold | **optimisée** (modèle dédié) |
+
+### Quand choisir quelle branche
+
+**`feature/yolo`** — le point de départ naturel.
+Déploiement immédiat, écosystème bien documenté, performances suffisantes pour la majorité des installations. Exporter le moteur TensorRT (`export_tensorrt.py`) pour doubler les FPS en production.
+
+**`feature/nanoowl`** — si le vocabulaire "personne" ne suffit pas.
+Permet de détecter par description textuelle sans réentraîner de modèle : `"a person in a hard hat"`, `"a security agent"`, etc. Contrepartie : FPS plus faible et étape de build obligatoire avant le premier démarrage.
+
+**`feature/deepstream`** — pour la production et la haute fiabilité.
+Pipeline entièrement GPU (GStreamer + TensorRT INT8), modèle PeopleNet spécialement entraîné pour la détection de piétons, tracker NvDCF robuste aux occultations partielles. Architecture plus complexe, mais la plus proche d'un déploiement industriel.
+
+---
+
 ## Fonctionnalités
 
-- Comptage entrées / sorties par ligne virtuelle (OWL-ViT + tracker IoU)
-- Détection par prompt texte libre (`"a person"`, modifiable sans réentraînement)
+- Comptage entrées / sorties par ligne virtuelle (YOLOv8n + ByteTrack)
 - Détection visuelle de l'état de la porte (ouverte / fermée) par différence de frames
 - Persistance des événements dans SQLite
 - Dashboard Grafana temps réel (rafraîchissement 5s)
@@ -47,9 +80,9 @@ Stack de détection : **NanoOWL / OWL-ViT TensorRT / tracker IoU**
 people-counter/
 ├── docker-compose.yml
 ├── app/
-│   ├── main.py                # pipeline principal NanoOWL + IoU tracker
-│   ├── build_engine.py        # compilation moteur TensorRT (une seule fois)
-│   └── reset_reference.py     # recapture frame de référence porte
+│   ├── main.py                # pipeline principal YOLOv8 + ByteTrack
+│   ├── reset_reference.py     # recapture frame de référence porte
+│   └── export_tensorrt.py     # export moteur TensorRT (optionnel)
 └── grafana/
     └── provisioning/
         ├── datasources/sqlite.yaml
@@ -80,39 +113,40 @@ sudo usermod -aG video $USER
 # se déconnecter / reconnecter pour appliquer le groupe
 ```
 
-### 3. Construire le moteur TensorRT (une seule fois)
+### 3. Valider le GPU dans le conteneur
 
 ```bash
-docker compose pull
-docker compose run --rm app python /app/build_engine.py
+docker run --rm --runtime nvidia --device /dev/video0 \
+  ultralytics/ultralytics:latest-jetson-jetpack6 \
+  python3 -c "
+import torch, cv2
+print('CUDA:', torch.cuda.is_available())
+print('GPU :', torch.cuda.get_device_name(0))
+cap = cv2.VideoCapture(0)
+print('Cam :', cap.isOpened())
+cap.release()
+"
+# attendu : CUDA: True | GPU: Orin | Cam: True
 ```
-
-Durée : 10-20 min sur Jetson Orin. Le moteur est mis en cache dans `/data/` pour les démarrages suivants.
 
 ### 4. Démarrer la stack
 
 ```bash
+docker compose pull
 docker compose up -d
 ```
 
 Grafana est accessible sur `http://<ip-du-pe1103n>:3000`
 
+Le plugin SQLite est installé automatiquement au premier démarrage (~30s).
+
 ---
 
 ## Configuration
 
-### Prompt de détection (`DETECT_PROMPTS` dans `app/main.py`)
-
-OWL-ViT détecte par description textuelle — aucun réentraînement nécessaire.
-
-```python
-DETECT_PROMPTS   = ["a person"]
-DETECT_THRESHOLD = 0.1   # score minimal de confiance (0.0-1.0)
-```
-
-Augmenter `DETECT_THRESHOLD` (0.2-0.4) pour réduire les faux positifs.
-
 ### Ligne de comptage (`LINE_Y` dans `app/main.py`)
+
+Position de la ligne virtuelle en fraction de la hauteur de l'image.
 
 ```python
 LINE_Y = 0.5   # 0.5 = milieu de l'image
@@ -120,6 +154,7 @@ LINE_Y = 0.5   # 0.5 = milieu de l'image
 
 Une personne qui descend (y croissant) en franchissant la ligne est comptée **entrée**.
 Une personne qui monte (y décroissant) est comptée **sortie**.
+Ajuster selon l'orientation de votre caméra.
 
 ### Zone de détection porte (`DOOR_ROI`)
 
@@ -147,14 +182,16 @@ cv2.imwrite('/data/roi_check.png', frame)
 "
 ```
 
+Récupérer `/data/roi_check.png` et vérifier que le rectangle vert encadre bien le battant.
+
 ### Sensibilité détection porte (`DOOR_THRESHOLD`)
 
 ```python
-DOOR_THRESHOLD = 25
+DOOR_THRESHOLD = 25   # valeur par défaut
 ```
 
-- Augmenter (40-60) si l'éclairage est variable
-- Diminuer (10-15) si la porte est peu visible
+- Augmenter (40-60) si l'éclairage est variable → moins de fausses alarmes
+- Diminuer (10-15) si la porte est peu visible dans l'image
 
 ### Seuils d'alerte Grafana
 
@@ -163,6 +200,13 @@ Dans `grafana/provisioning/alerting/door_alert.yaml` :
 ```yaml
 for: 5m          # durée avant alerte porte ouverte
 params: [20]     # capacité max de la salle
+```
+
+Dans le dashboard (`people_counter.json`, panel "Présence actuelle estimée") :
+
+```json
+{ "color": "yellow", "value": 10 },   // alerte jaune
+{ "color": "red",    "value": 20 }    // alerte rouge
 ```
 
 ---
@@ -188,6 +232,26 @@ addresses: admin@votredomaine.com
 
 ---
 
+## Performance optionnelle : export TensorRT
+
+Gain de 2-3× en débit d'inférence. À faire une seule fois.
+
+```bash
+docker compose exec app python /app/export_tensorrt.py
+```
+
+Puis modifier `MODEL_PATH` dans `app/main.py` :
+
+```python
+MODEL_PATH = "/data/yolov8n.engine"
+```
+
+```bash
+docker compose restart app
+```
+
+---
+
 ## Maintenance
 
 ### Recapturer la frame de référence (porte fermée)
@@ -200,7 +264,7 @@ docker compose exec app python /app/reset_reference.py
 ### Vérifier les logs
 
 ```bash
-docker compose logs -f app        # pipeline NanoOWL
+docker compose logs -f app        # pipeline vision
 docker compose logs -f dashboard  # Grafana
 ```
 
@@ -220,15 +284,20 @@ docker compose exec dashboard \
   sqlite3 /data/counts.db "VACUUM"
 ```
 
+### Vérifier la persistance après reboot
+
+```bash
+sudo reboot
+# après redémarrage
+docker compose ps   # doit afficher "running" pour app et dashboard
+```
+
 ---
 
 ## Dépannage
 
 | Symptôme | Solution |
 | --- | --- |
-| `ENGINE_PATH` introuvable au démarrage | Lancer `build_engine.py` avant le premier `up` |
-| Détections manquées | Baisser `DETECT_THRESHOLD` (0.05) |
-| Trop de faux positifs | Monter `DETECT_THRESHOLD` (0.3-0.5) |
 | `CUDA: False` dans le conteneur | Vérifier `--runtime nvidia` et `daemon.json` |
 | Caméra non détectée | Vérifier droits groupe `video` et `devices:` dans compose |
 | Fausses alarmes porte | Augmenter `DOOR_THRESHOLD` ou recapturer la référence |
