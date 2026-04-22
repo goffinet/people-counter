@@ -1,8 +1,8 @@
 services:
   app:
-    # Image fournie par la branche feature mergée (feature/yolo ou feature/nanoowl).
-    # Ne pas démarrer directement depuis main — merger d'abord une branche feature.
-    image: ${APP_IMAGE:-people-counter:not-set}
+    # DeepStream 7.0 — inclut PeopleNet, pyds et les plugins GStreamer NVIDIA
+    # Compatible JetPack 6.x (L4T r36.x) via image multiarch
+    image: nvcr.io/nvidia/deepstream:7.0-samples
     runtime: nvidia
     ipc: host
     environment:
@@ -12,7 +12,7 @@ services:
     volumes:
       - ./app:/app
       - data:/data
-    command: python /app/main.py
+    command: python3 /app/main.py
     restart: unless-stopped
 
   dashboard:

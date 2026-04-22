@@ -1,37 +1,27 @@
 """
-Recapture la frame de référence (porte fermée) sans redémarrer le conteneur.
-Utile si l'éclairage a changé et génère de fausses alarmes.
+Recapture la frame de référence porte sans redémarrer le service.
+Envoie SIGUSR1 au processus principal via le fichier /data/app.pid.
 
-Usage depuis l'hôte :
+Usage :
   docker compose exec app python /app/reset_reference.py
+
+Prérequis : l'application doit être en cours d'exécution et la porte fermée.
 """
 
-import cv2
-import numpy as np
-import pickle
+import os
+import signal
 
-DOOR_ROI  = (0.2, 0.1, 0.8, 0.9)
-REF_PATH  = "/data/door_reference.pkl"
+PID_FILE = "/data/app.pid"
 
-cap = cv2.VideoCapture(0)
-print("Assurez-vous que la porte est FERMÉE. Capture dans 3s...")
-import time; time.sleep(3)
-ok, frame = cap.read()
-cap.release()
+if not os.path.exists(PID_FILE):
+    print("[ERREUR] /data/app.pid introuvable — l'application est-elle démarrée ?")
+    raise SystemExit(1)
 
-if not ok:
-    raise RuntimeError("Impossible de lire la caméra")
-
-h, w = frame.shape[:2]
-x1, y1 = int(DOOR_ROI[0]*w), int(DOOR_ROI[1]*h)
-x2, y2 = int(DOOR_ROI[2]*w), int(DOOR_ROI[3]*h)
-roi_gray = cv2.cvtColor(frame[y1:y2, x1:x2], cv2.COLOR_BGR2GRAY)
-
-with open(REF_PATH, "wb") as f:
-    pickle.dump(roi_gray, f)
-
-debug = frame.copy()
-cv2.rectangle(debug, (x1,y1), (x2,y2), (0,255,0), 2)
-cv2.imwrite("/data/roi_check.png", debug)
-print(f"Référence sauvegardée dans {REF_PATH}")
-print("Image de vérification : /data/roi_check.png")
+pid = int(open(PID_FILE).read().strip())
+try:
+    os.kill(pid, signal.SIGUSR1)
+    print(f"[OK] Signal SIGUSR1 envoyé au processus {pid}.")
+    print("[INFO] La référence sera recapturée sur la prochaine frame de l'appsink.")
+except ProcessLookupError:
+    print(f"[ERREUR] Aucun processus avec le PID {pid}. Redémarrez le service.")
+    raise SystemExit(1)

@@ -3,6 +3,8 @@
 Système de comptage de personnes et de surveillance de porte par caméra USB,
 déployé en conteneurs Docker sur ASUS IoT PE1103N (NVIDIA Jetson Orin, JetPack 6.x).
 
+Stack de détection : **DeepStream 7 / PeopleNet v2.6 / NvDCF**
+
 ---
 
 ## Branches
@@ -11,15 +13,16 @@ déployé en conteneurs Docker sur ASUS IoT PE1103N (NVIDIA Jetson Orin, JetPack
 | --- | --- | --- |
 | `feature/yolo` | YOLOv8n + ByteTrack (Ultralytics) | `ultralytics/ultralytics:latest-jetson-jetpack6` |
 | `feature/nanoowl` | OWL-ViT TensorRT + tracker IoU (NanoOWL) | `dustynv/nanoowl:r36.4.0` |
+| **`feature/deepstream`** | **PeopleNet v2.6 + NvDCF (DeepStream 7)** | **`nvcr.io/nvidia/deepstream:7.0-samples`** |
 
-`main` est la branche d'intégration : elle contient le code partagé (détection porte, base de données, dashboard Grafana). Merger une branche `feature/*` pour obtenir une stack complète et déployable.
+`main` est la branche d'intégration neutre (code partagé uniquement).
 
 ---
 
-## Fonctionnalités communes
+## Fonctionnalités
 
+- Comptage entrées / sorties par ligne virtuelle (PeopleNet + tracker NvDCF)
 - Détection visuelle de l'état de la porte (ouverte / fermée) par différence de frames
-- Comptage entrées / sorties par ligne virtuelle
 - Persistance des événements dans SQLite
 - Dashboard Grafana temps réel (rafraîchissement 5s)
 - Alertes email : porte ouverte > 5 min, salle en suroccupation
@@ -29,7 +32,7 @@ déployé en conteneurs Docker sur ASUS IoT PE1103N (NVIDIA Jetson Orin, JetPack
 ## Prérequis
 
 | Élément | Version requise |
-|---|---|
+| --- | --- |
 | ASUS IoT PE1103N | JetPack 6.x (L4T r36.x) |
 | Docker Engine | ≥ 24 |
 | NVIDIA Container Toolkit | ≥ 1.14 |
@@ -43,34 +46,26 @@ déployé en conteneurs Docker sur ASUS IoT PE1103N (NVIDIA Jetson Orin, JetPack
 people-counter/
 ├── docker-compose.yml
 ├── app/
-│   ├── main.py                # pipeline principal (code partagé)
-│   └── reset_reference.py     # recapture frame de référence porte
+│   ├── main.py                        # pipeline GStreamer + DeepStream
+│   ├── reset_reference.py             # recapture frame de référence porte (SIGUSR1)
+│   └── config/
+│       ├── pgie_peoplenet.txt         # config nvinfer (PeopleNet)
+│       ├── tracker_nvdcf.yml          # config tracker NvDCF
+│       └── peoplenet_labels.txt       # labels des classes (person / bag / face)
 └── grafana/
     └── provisioning/
-        ├── datasources/
-        │   └── sqlite.yaml
+        ├── datasources/sqlite.yaml
         ├── dashboards/
         │   ├── dashboard.yaml
         │   └── people_counter.json
-        └── alerting/
-            └── door_alert.yaml
+        └── alerting/door_alert.yaml
 ```
 
 ---
 
 ## Installation
 
-### 1. Choisir une branche feature
-
-```bash
-# Stack YOLOv8 + ByteTrack
-git checkout feature/yolo
-
-# Stack NanoOWL (OWL-ViT TensorRT)
-git checkout feature/nanoowl
-```
-
-### 2. Vérifier le runtime NVIDIA
+### 1. Vérifier le runtime NVIDIA
 
 ```bash
 sudo nvidia-ctk runtime configure --runtime=docker --set-as-default
@@ -79,7 +74,7 @@ cat /etc/docker/daemon.json
 # doit contenir : "default-runtime": "nvidia"
 ```
 
-### 3. Vérifier l'accès à la caméra
+### 2. Vérifier l'accès à la caméra
 
 ```bash
 ls -la /dev/video0
@@ -87,12 +82,15 @@ sudo usermod -aG video $USER
 # se déconnecter / reconnecter pour appliquer le groupe
 ```
 
-### 4. Démarrer la stack
+### 3. Démarrer la stack
 
 ```bash
 docker compose pull
 docker compose up -d
 ```
+
+**Premier démarrage :** `nvinfer` compile le modèle PeopleNet en moteur TensorRT INT8.
+Durée : ~5 min sur Jetson Orin. Le moteur est mis en cache dans `/data/models/` pour les démarrages suivants.
 
 Grafana est accessible sur `http://<ip-du-pe1103n>:3000`
 
@@ -120,25 +118,13 @@ Coordonnées en fractions de l'image `(x1, y1, x2, y2)`.
 DOOR_ROI = (0.2, 0.1, 0.8, 0.9)  # valeur par défaut
 ```
 
-Pour vérifier visuellement la zone :
+Pour vérifier visuellement la zone, récupérer `/data/roi_check.png` après démarrage.
+Ce fichier est généré automatiquement au démarrage (et à chaque recapture de référence).
 
 ```bash
-docker compose exec app python3 -c "
-import cv2
-cap = cv2.VideoCapture(0)
-_, frame = cap.read()
-cap.release()
-h, w = frame.shape[:2]
-roi = (0.2, 0.1, 0.8, 0.9)
-cv2.rectangle(frame,
-  (int(roi[0]*w), int(roi[1]*h)),
-  (int(roi[2]*w), int(roi[3]*h)),
-  (0,255,0), 2)
-cv2.imwrite('/data/roi_check.png', frame)
-"
+# Exemple : copie depuis le volume Docker vers l'hôte
+docker compose cp app:/data/roi_check.png ./roi_check.png
 ```
-
-Récupérer `/data/roi_check.png` et vérifier que le rectangle vert encadre bien le battant.
 
 ### Sensibilité détection porte (`DOOR_THRESHOLD`)
 
@@ -149,6 +135,16 @@ DOOR_THRESHOLD = 25   # valeur par défaut
 - Augmenter (40-60) si l'éclairage est variable → moins de fausses alarmes
 - Diminuer (10-15) si la porte est peu visible dans l'image
 
+### Seuil de détection PeopleNet (`pre-cluster-threshold` dans `app/config/pgie_peoplenet.txt`)
+
+```ini
+[class-attrs-0]
+pre-cluster-threshold=0.4   # confiance minimale pour la classe "person"
+```
+
+- Augmenter (0.6-0.8) pour réduire les faux positifs
+- Diminuer (0.2-0.3) si des personnes ne sont pas détectées
+
 ### Seuils d'alerte Grafana
 
 Dans `grafana/provisioning/alerting/door_alert.yaml` :
@@ -156,13 +152,6 @@ Dans `grafana/provisioning/alerting/door_alert.yaml` :
 ```yaml
 for: 5m          # durée avant alerte porte ouverte
 params: [20]     # capacité max de la salle
-```
-
-Dans le dashboard (`people_counter.json`, panel "Présence actuelle estimée") :
-
-```json
-{ "color": "yellow", "value": 10 },   // alerte jaune
-{ "color": "red",    "value": 20 }    // alerte rouge
 ```
 
 ---
@@ -192,15 +181,20 @@ addresses: admin@votredomaine.com
 
 ### Recapturer la frame de référence (porte fermée)
 
+La caméra est verrouillée par le pipeline GStreamer. La recapture s'effectue via signal UNIX
+sans redémarrer le service :
+
 ```bash
-# Assurez-vous que la porte est fermée avant de lancer
-docker compose exec app python /app/reset_reference.py
+# Assurez-vous que la porte est fermée, puis :
+docker compose exec app python3 /app/reset_reference.py
 ```
+
+`reset_reference.py` envoie `SIGUSR1` au processus principal, qui recapture la prochaine frame de l'appsink comme nouvelle référence. Le fichier `/data/roi_check.png` est mis à jour.
 
 ### Vérifier les logs
 
 ```bash
-docker compose logs -f app        # pipeline vision
+docker compose logs -f app        # pipeline DeepStream
 docker compose logs -f dashboard  # Grafana
 ```
 
@@ -216,8 +210,8 @@ docker compose exec dashboard \
 
 ```bash
 # crontab -e
-0 3 * * 0 docker compose -f /chemin/vers/docker-compose.yml exec -T app \
-  python3 -c "import sqlite3; sqlite3.connect('/data/counts.db').execute('VACUUM')"
+0 3 * * 0 docker compose -f /chemin/vers/docker-compose.yml exec -T dashboard \
+  sqlite3 /data/counts.db "VACUUM"
 ```
 
 ### Vérifier la persistance après reboot
@@ -233,8 +227,10 @@ docker compose ps   # doit afficher "running" pour app et dashboard
 ## Dépannage
 
 | Symptôme | Solution |
-|---|---|
-| `CUDA: False` dans le conteneur | Vérifier `--runtime nvidia` et `daemon.json` |
+| --- | --- |
+| Démarrage lent (~5 min) | Normal au premier lancement — compilation TRT en cours |
+| `nvinfer` erreur modèle introuvable | Vérifier que l'image `deepstream:7.0-samples` est bien tirée |
+| `CUDA: False` / pas de GPU | Vérifier `--runtime nvidia` et `daemon.json` |
 | Caméra non détectée | Vérifier droits groupe `video` et `devices:` dans compose |
 | Fausses alarmes porte | Augmenter `DOOR_THRESHOLD` ou recapturer la référence |
 | Double comptage | Diminuer `LINE_Y` ou ajuster la hauteur caméra |
