@@ -1,6 +1,8 @@
 services:
   app:
-    image: ultralytics/ultralytics:latest-jetson-jetpack6
+    # Image fournie par la branche feature mergée (feature/yolo ou feature/nanoowl).
+    # Ne pas démarrer directement depuis main — merger d'abord une branche feature.
+    image: ${APP_IMAGE:-people-counter:not-set}
     runtime: nvidia
     ipc: host
     environment:
