@@ -40,12 +40,11 @@ déployé en conteneurs Docker sur ASUS IoT PE1103N (NVIDIA Jetson Orin, JetPack
 
 ## Structure du projet
 
-```
+```text
 people-counter/
 ├── docker-compose.yml
 ├── app/
-│   ├── main.py                # pipeline principal (code partagé)
-│   └── reset_reference.py     # recapture frame de référence porte
+│   └── main.py                # code partagé (détection porte, base de données)
 └── grafana/
     └── provisioning/
         ├── datasources/
@@ -193,13 +192,6 @@ addresses: admin@votredomaine.com
 ---
 
 ## Maintenance
-
-### Recapturer la frame de référence (porte fermée)
-
-```bash
-# Assurez-vous que la porte est fermée avant de lancer
-docker compose exec app python /app/reset_reference.py
-```
 
 ### Vérifier les logs
 
