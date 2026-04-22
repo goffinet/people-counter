@@ -2,10 +2,11 @@
 People counter + door status detector — code partagé
 ASUS IoT PE1103N — JetPack 6
 
-Ce fichier est la base commune aux deux stacks de détection.
+Ce fichier est la base commune aux trois stacks de détection.
 Merger une branche feature pour obtenir un pipeline complet :
-  feature/yolo     → YOLOv8n + ByteTrack (Ultralytics)
-  feature/nanoowl  → OWL-ViT TensorRT + tracker IoU (NanoOWL)
+  feature/yolo       → YOLOv8n + ByteTrack (Ultralytics)
+  feature/nanoowl    → OWL-ViT TensorRT + tracker IoU (NanoOWL)
+  feature/deepstream → PeopleNet v2.6 + NvDCF (DeepStream 7)
 
 Configuration :
   LINE_Y          : position de la ligne de comptage (0.0 à 1.0, fraction de hauteur)
