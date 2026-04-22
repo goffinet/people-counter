@@ -17,6 +17,40 @@ déployé en conteneurs Docker sur ASUS IoT PE1103N (NVIDIA Jetson Orin, JetPack
 
 ---
 
+## Comparaison des stacks de détection
+
+### Performance et complexité
+
+| Critère | `feature/yolo` | `feature/nanoowl` | `feature/deepstream` |
+| --- | --- | --- | --- |
+| FPS (Jetson Orin) | ~30 (PyTorch) / ~60 (TRT) | ~8-15 | le plus élevé (pipeline GPU INT8) |
+| Démarrage à froid | immédiat | construction moteur TRT (~15 min) | compilation moteur (~5 min) |
+| Complexité du code | faible (Python + OpenCV) | moyenne (Python + OpenCV + HF) | élevée (GStreamer + DeepStream + pyds) |
+| Accès caméra | OpenCV `VideoCapture` | OpenCV `VideoCapture` | GStreamer `v4l2src` (exclusif) |
+
+### Détection et tracking
+
+| Critère | `feature/yolo` | `feature/nanoowl` | `feature/deepstream` |
+| --- | --- | --- | --- |
+| Modèle | YOLOv8n (COCO) | OWL-ViT base patch32 | PeopleNet v2.6 (ResNet34) |
+| Vocabulaire | fixe — classe `person` (COCO) | **ouvert — prompt texte libre** | fixe — `person / bag / face` |
+| Réentraînement | non | **non** (prompt suffisant) | non |
+| Tracker | ByteTrack (intégré Ultralytics) | IoU greedy (minimal) | **NvDCF (production, robuste aux occlusions)** |
+| Précision piétons | bonne | variable selon threshold | **optimisée** (modèle dédié) |
+
+### Quand choisir quelle branche
+
+**`feature/yolo`** — le point de départ naturel.
+Déploiement immédiat, écosystème bien documenté, performances suffisantes pour la majorité des installations. Exporter le moteur TensorRT (`export_tensorrt.py`) pour doubler les FPS en production.
+
+**`feature/nanoowl`** — si le vocabulaire "personne" ne suffit pas.
+Permet de détecter par description textuelle sans réentraîner de modèle : `"a person in a hard hat"`, `"a security agent"`, etc. Contrepartie : FPS plus faible et étape de build obligatoire avant le premier démarrage.
+
+**`feature/deepstream`** — pour la production et la haute fiabilité.
+Pipeline entièrement GPU (GStreamer + TensorRT INT8), modèle PeopleNet spécialement entraîné pour la détection de piétons, tracker NvDCF robuste aux occultations partielles. Architecture plus complexe, mais la plus proche d'un déploiement industriel.
+
+---
+
 ## Fonctionnalités communes
 
 - Détection visuelle de l'état de la porte (ouverte / fermée) par différence de frames
@@ -123,25 +157,7 @@ Coordonnées en fractions de l'image `(x1, y1, x2, y2)`.
 DOOR_ROI = (0.2, 0.1, 0.8, 0.9)  # valeur par défaut
 ```
 
-Pour vérifier visuellement la zone :
-
-```bash
-docker compose exec app python3 -c "
-import cv2
-cap = cv2.VideoCapture(0)
-_, frame = cap.read()
-cap.release()
-h, w = frame.shape[:2]
-roi = (0.2, 0.1, 0.8, 0.9)
-cv2.rectangle(frame,
-  (int(roi[0]*w), int(roi[1]*h)),
-  (int(roi[2]*w), int(roi[3]*h)),
-  (0,255,0), 2)
-cv2.imwrite('/data/roi_check.png', frame)
-"
-```
-
-Récupérer `/data/roi_check.png` et vérifier que le rectangle vert encadre bien le battant.
+Une image de vérification `/data/roi_check.png` est générée automatiquement au démarrage par chaque branche feature (rectangle vert = ROI porte, ligne rouge = ligne de comptage). Consulter le README de la branche concernée pour la procédure de recapture.
 
 ### Sensibilité détection porte (`DOOR_THRESHOLD`)
 
