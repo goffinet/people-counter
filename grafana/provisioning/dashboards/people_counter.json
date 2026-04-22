@@ -1,0 +1,165 @@
+{
+  "title": "Compteur de personnes",
+  "uid": "people-counter-v1",
+  "refresh": "5s",
+  "schemaVersion": 38,
+  "time": { "from": "now-24h", "to": "now" },
+  "timezone": "browser",
+  "panels": [
+
+    {
+      "id": 1,
+      "title": "Entrées aujourd'hui",
+      "type": "stat",
+      "gridPos": { "x": 0, "y": 0, "w": 6, "h": 4 },
+      "options": { "colorMode": "background", "graphMode": "none", "textMode": "value" },
+      "fieldConfig": {
+        "defaults": { "color": { "fixedColor": "green", "mode": "fixed" } }
+      },
+      "targets": [{
+        "refId": "A",
+        "rawQueryText": "SELECT count(*) as value FROM events WHERE direction='in' AND ts >= strftime('%s', 'now', 'start of day')",
+        "queryType": "table",
+        "datasource": { "type": "frser-sqlite-datasource", "uid": "SQLite" }
+      }]
+    },
+
+    {
+      "id": 2,
+      "title": "Sorties aujourd'hui",
+      "type": "stat",
+      "gridPos": { "x": 6, "y": 0, "w": 6, "h": 4 },
+      "options": { "colorMode": "background", "graphMode": "none", "textMode": "value" },
+      "fieldConfig": {
+        "defaults": { "color": { "fixedColor": "orange", "mode": "fixed" } }
+      },
+      "targets": [{
+        "refId": "A",
+        "rawQueryText": "SELECT count(*) as value FROM events WHERE direction='out' AND ts >= strftime('%s', 'now', 'start of day')",
+        "queryType": "table",
+        "datasource": { "type": "frser-sqlite-datasource", "uid": "SQLite" }
+      }]
+    },
+
+    {
+      "id": 3,
+      "title": "Présence actuelle estimée",
+      "type": "stat",
+      "gridPos": { "x": 12, "y": 0, "w": 6, "h": 4 },
+      "options": { "colorMode": "background", "graphMode": "none", "textMode": "value" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green",  "value": null },
+              { "color": "yellow", "value": 10   },
+              { "color": "red",    "value": 20   }
+            ]
+          }
+        }
+      },
+      "targets": [{
+        "refId": "A",
+        "rawQueryText": "SELECT (SELECT count(*) FROM events WHERE direction='in' AND ts >= strftime('%s', 'now', 'start of day')) - (SELECT count(*) FROM events WHERE direction='out' AND ts >= strftime('%s', 'now', 'start of day')) as value",
+        "queryType": "table",
+        "datasource": { "type": "frser-sqlite-datasource", "uid": "SQLite" }
+      }]
+    },
+
+    {
+      "id": 6,
+      "title": "Statut actuel de la porte",
+      "type": "stat",
+      "gridPos": { "x": 18, "y": 0, "w": 6, "h": 4 },
+      "options": { "colorMode": "background", "graphMode": "none", "textMode": "value" },
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [{
+            "type": "value",
+            "options": {
+              "open":   { "text": "Ouverte", "color": "green",  "index": 0 },
+              "closed": { "text": "Fermée",  "color": "gray",   "index": 1 }
+            }
+          }]
+        }
+      },
+      "targets": [{
+        "refId": "A",
+        "rawQueryText": "SELECT status as value FROM door_status ORDER BY ts DESC LIMIT 1",
+        "queryType": "table",
+        "datasource": { "type": "frser-sqlite-datasource", "uid": "SQLite" }
+      }]
+    },
+
+    {
+      "id": 8,
+      "title": "Porte ouverte depuis",
+      "type": "stat",
+      "gridPos": { "x": 0, "y": 4, "w": 6, "h": 4 },
+      "options": { "colorMode": "background", "graphMode": "none", "textMode": "value" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green",  "value": null },
+              { "color": "yellow", "value": 120  },
+              { "color": "red",    "value": 300  }
+            ]
+          }
+        }
+      },
+      "targets": [{
+        "refId": "A",
+        "rawQueryText": "SELECT CASE WHEN (SELECT status FROM door_status ORDER BY ts DESC LIMIT 1) = 'open' THEN strftime('%s','now') - (SELECT ts FROM door_status WHERE status='open' ORDER BY ts DESC LIMIT 1) ELSE 0 END as value",
+        "queryType": "table",
+        "datasource": { "type": "frser-sqlite-datasource", "uid": "SQLite" }
+      }]
+    },
+
+    {
+      "id": 4,
+      "title": "Flux par tranche de 30 min",
+      "type": "barchart",
+      "gridPos": { "x": 6, "y": 4, "w": 18, "h": 8 },
+      "options": { "stacking": "normal", "xField": "time" },
+      "targets": [{
+        "refId": "A",
+        "rawQueryText": "SELECT datetime(ts - (ts % 1800), 'unixepoch', 'localtime') as time, SUM(CASE WHEN direction='in' THEN 1 ELSE 0 END) as Entrées, SUM(CASE WHEN direction='out' THEN 1 ELSE 0 END) as Sorties FROM events WHERE ts >= strftime('%s', 'now', '-24 hours') GROUP BY ts - (ts % 1800) ORDER BY time",
+        "queryType": "table",
+        "datasource": { "type": "frser-sqlite-datasource", "uid": "SQLite" }
+      }]
+    },
+
+    {
+      "id": 7,
+      "title": "Historique statut porte",
+      "type": "table",
+      "gridPos": { "x": 0, "y": 12, "w": 12, "h": 6 },
+      "targets": [{
+        "refId": "A",
+        "rawQueryText": "SELECT datetime(ts,'unixepoch','localtime') as Heure, CASE status WHEN 'open' THEN 'Ouverte' ELSE 'Fermée' END as Statut FROM door_status ORDER BY ts DESC LIMIT 30",
+        "queryType": "table",
+        "datasource": { "type": "frser-sqlite-datasource", "uid": "SQLite" }
+      }]
+    },
+
+    {
+      "id": 5,
+      "title": "Historique passages",
+      "type": "table",
+      "gridPos": { "x": 12, "y": 12, "w": 12, "h": 6 },
+      "targets": [{
+        "refId": "A",
+        "rawQueryText": "SELECT datetime(ts, 'unixepoch', 'localtime') as Heure, CASE direction WHEN 'in' THEN 'Entrée' ELSE 'Sortie' END as Direction FROM events ORDER BY ts DESC LIMIT 50",
+        "queryType": "table",
+        "datasource": { "type": "frser-sqlite-datasource", "uid": "SQLite" }
+      }]
+    }
+
+  ]
+}

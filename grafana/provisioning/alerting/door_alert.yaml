@@ -1,0 +1,100 @@
+apiVersion: 1
+
+contactPoints:
+  - orgId: 1
+    name: email-admin
+    receivers:
+      - uid: email-admin-uid
+        type: email
+        settings:
+          addresses: admin@votredomaine.com   # à adapter
+          singleEmail: true
+
+policies:
+  - orgId: 1
+    receiver: email-admin
+
+groups:
+  - orgId: 1
+    name: door-alerts
+    folder: Alertes
+    interval: 1m
+    rules:
+
+      - uid: door-open-too-long
+        title: "Porte ouverte depuis trop longtemps"
+        condition: C
+        for: 5m
+        annotations:
+          summary: "La porte d'entrée est ouverte depuis plus de 5 minutes"
+          description: "Vérifier si la porte a été laissée ouverte accidentellement."
+        labels:
+          severity: warning
+        data:
+          - refId: A
+            queryType: table
+            relativeTimeRange:
+              from: 300
+              to: 0
+            model:
+              rawQueryText: >
+                SELECT
+                  CASE
+                    WHEN (SELECT status FROM door_status ORDER BY ts DESC LIMIT 1) = 'open'
+                    AND (strftime('%s','now') - (SELECT ts FROM door_status WHERE status='open' ORDER BY ts DESC LIMIT 1)) > 300
+                    THEN 1
+                    ELSE 0
+                  END as value
+              queryType: table
+              datasource:
+                type: frser-sqlite-datasource
+                uid: SQLite
+          - refId: C
+            type: classic_conditions
+            model:
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0]
+                  operator:
+                    type: and
+                  query:
+                    params: [A]
+                  reducer:
+                    type: last
+
+      - uid: room-overcrowded
+        title: "Salle en suroccupation"
+        condition: C
+        for: 2m
+        annotations:
+          summary: "La salle dépasse sa capacité maximale"
+          description: "Le nombre de personnes présentes dépasse le seuil configuré."
+        labels:
+          severity: critical
+        data:
+          - refId: A
+            queryType: table
+            model:
+              rawQueryText: >
+                SELECT
+                  (SELECT count(*) FROM events WHERE direction='in'  AND ts >= strftime('%s','now','start of day'))
+                - (SELECT count(*) FROM events WHERE direction='out' AND ts >= strftime('%s','now','start of day'))
+                as value
+              queryType: table
+              datasource:
+                type: frser-sqlite-datasource
+                uid: SQLite
+          - refId: C
+            type: classic_conditions
+            model:
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [20]      # seuil de capacité max — à adapter
+                  operator:
+                    type: and
+                  query:
+                    params: [A]
+                  reducer:
+                    type: last
