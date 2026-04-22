@@ -3,6 +3,20 @@
 Système de comptage de personnes et de surveillance de porte par caméra USB,
 déployé en conteneurs Docker sur ASUS IoT PE1103N (NVIDIA Jetson Orin, JetPack 6.x).
 
+Stack de détection : **YOLOv8n + ByteTrack (Ultralytics)**
+
+---
+
+## Branches
+
+| Branche | Stack de détection | Image Docker |
+| --- | --- | --- |
+| **`feature/yolo`** | **YOLOv8n + ByteTrack (Ultralytics)** | **`ultralytics/ultralytics:latest-jetson-jetpack6`** |
+| `feature/nanoowl` | OWL-ViT TensorRT + tracker IoU (NanoOWL) | `dustynv/nanoowl:r36.4.0` |
+| `feature/deepstream` | PeopleNet v2.6 + NvDCF (DeepStream 7) | `nvcr.io/nvidia/deepstream:7.0-samples` |
+
+`main` est la branche d'intégration neutre (code partagé uniquement).
+
 ---
 
 ## Fonctionnalités
@@ -18,7 +32,7 @@ déployé en conteneurs Docker sur ASUS IoT PE1103N (NVIDIA Jetson Orin, JetPack
 ## Prérequis
 
 | Élément | Version requise |
-|---|---|
+| --- | --- |
 | ASUS IoT PE1103N | JetPack 6.x (L4T r36.x) |
 | Docker Engine | ≥ 24 |
 | NVIDIA Container Toolkit | ≥ 1.14 |
@@ -28,22 +42,20 @@ déployé en conteneurs Docker sur ASUS IoT PE1103N (NVIDIA Jetson Orin, JetPack
 
 ## Structure du projet
 
-```
+```text
 people-counter/
 ├── docker-compose.yml
 ├── app/
-│   ├── main.py                # pipeline principal
-│   ├── reset_reference.py     # recapture frame de référence
-│   └── export_tensorrt.py     # export TensorRT (optionnel)
+│   ├── main.py                # pipeline principal YOLOv8 + ByteTrack
+│   ├── reset_reference.py     # recapture frame de référence porte
+│   └── export_tensorrt.py     # export moteur TensorRT (optionnel)
 └── grafana/
     └── provisioning/
-        ├── datasources/
-        │   └── sqlite.yaml
+        ├── datasources/sqlite.yaml
         ├── dashboards/
         │   ├── dashboard.yaml
         │   └── people_counter.json
-        └── alerting/
-            └── door_alert.yaml
+        └── alerting/door_alert.yaml
 ```
 
 ---
@@ -53,11 +65,8 @@ people-counter/
 ### 1. Vérifier le runtime NVIDIA
 
 ```bash
-# Configurer nvidia comme runtime par défaut
 sudo nvidia-ctk runtime configure --runtime=docker --set-as-default
 sudo systemctl restart docker
-
-# Vérifier
 cat /etc/docker/daemon.json
 # doit contenir : "default-runtime": "nvidia"
 ```
@@ -213,8 +222,6 @@ docker compose restart app
 
 ### Recapturer la frame de référence (porte fermée)
 
-Utile si l'éclairage a changé et génère de fausses alarmes.
-
 ```bash
 # Assurez-vous que la porte est fermée avant de lancer
 docker compose exec app python /app/reset_reference.py
@@ -237,12 +244,10 @@ docker compose exec dashboard \
 
 ### Nettoyage SQLite hebdomadaire (optionnel)
 
-Ajouter en cron sur l'hôte :
-
 ```bash
 # crontab -e
-0 3 * * 0 docker compose -f /chemin/vers/docker-compose.yml exec -T app \
-  python3 -c "import sqlite3; sqlite3.connect('/data/counts.db').execute('VACUUM')"
+0 3 * * 0 docker compose -f /chemin/vers/docker-compose.yml exec -T dashboard \
+  sqlite3 /data/counts.db "VACUUM"
 ```
 
 ### Vérifier la persistance après reboot
@@ -258,7 +263,7 @@ docker compose ps   # doit afficher "running" pour app et dashboard
 ## Dépannage
 
 | Symptôme | Solution |
-|---|---|
+| --- | --- |
 | `CUDA: False` dans le conteneur | Vérifier `--runtime nvidia` et `daemon.json` |
 | Caméra non détectée | Vérifier droits groupe `video` et `devices:` dans compose |
 | Fausses alarmes porte | Augmenter `DOOR_THRESHOLD` ou recapturer la référence |
