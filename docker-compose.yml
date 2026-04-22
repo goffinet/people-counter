@@ -1,10 +1,14 @@
 services:
   app:
-    image: ultralytics/ultralytics:latest-jetson-jetpack6
+    # NanoOWL (OWL-ViT TensorRT) via jetson-containers — adapter le tag à votre version JetPack :
+    #   JetPack 6.0 → r36.2.0 | JetPack 6.1 → r36.3.0 | JetPack 6.2 → r36.4.0
+    image: dustynv/nanoowl:r36.4.0
     runtime: nvidia
     ipc: host
     environment:
       - NVIDIA_VISIBLE_DEVICES=all
+      # Cache Hugging Face dans le volume persistant (évite le re-téléchargement)
+      - HF_HOME=/data/hf_cache
     devices:
       - /dev/video0:/dev/video0
     volumes:
