@@ -5,10 +5,21 @@ déployé en conteneurs Docker sur ASUS IoT PE1103N (NVIDIA Jetson Orin, JetPack
 
 ---
 
-## Fonctionnalités
+## Branches
 
-- Comptage entrées / sorties par ligne virtuelle (YOLOv8n + ByteTrack)
+| Branche | Stack de détection | Image Docker |
+| --- | --- | --- |
+| `feature/yolo` | YOLOv8n + ByteTrack (Ultralytics) | `ultralytics/ultralytics:latest-jetson-jetpack6` |
+| `feature/nanoowl` | OWL-ViT TensorRT + tracker IoU (NanoOWL) | `dustynv/nanoowl:r36.4.0` |
+
+`main` est la branche d'intégration : elle contient le code partagé (détection porte, base de données, dashboard Grafana). Merger une branche `feature/*` pour obtenir une stack complète et déployable.
+
+---
+
+## Fonctionnalités communes
+
 - Détection visuelle de l'état de la porte (ouverte / fermée) par différence de frames
+- Comptage entrées / sorties par ligne virtuelle
 - Persistance des événements dans SQLite
 - Dashboard Grafana temps réel (rafraîchissement 5s)
 - Alertes email : porte ouverte > 5 min, salle en suroccupation
@@ -32,9 +43,8 @@ déployé en conteneurs Docker sur ASUS IoT PE1103N (NVIDIA Jetson Orin, JetPack
 people-counter/
 ├── docker-compose.yml
 ├── app/
-│   ├── main.py                # pipeline principal
-│   ├── reset_reference.py     # recapture frame de référence
-│   └── export_tensorrt.py     # export TensorRT (optionnel)
+│   ├── main.py                # pipeline principal (code partagé)
+│   └── reset_reference.py     # recapture frame de référence porte
 └── grafana/
     └── provisioning/
         ├── datasources/
@@ -50,40 +60,31 @@ people-counter/
 
 ## Installation
 
-### 1. Vérifier le runtime NVIDIA
+### 1. Choisir une branche feature
 
 ```bash
-# Configurer nvidia comme runtime par défaut
+# Stack YOLOv8 + ByteTrack
+git checkout feature/yolo
+
+# Stack NanoOWL (OWL-ViT TensorRT)
+git checkout feature/nanoowl
+```
+
+### 2. Vérifier le runtime NVIDIA
+
+```bash
 sudo nvidia-ctk runtime configure --runtime=docker --set-as-default
 sudo systemctl restart docker
-
-# Vérifier
 cat /etc/docker/daemon.json
 # doit contenir : "default-runtime": "nvidia"
 ```
 
-### 2. Vérifier l'accès à la caméra
+### 3. Vérifier l'accès à la caméra
 
 ```bash
 ls -la /dev/video0
 sudo usermod -aG video $USER
 # se déconnecter / reconnecter pour appliquer le groupe
-```
-
-### 3. Valider le GPU dans le conteneur
-
-```bash
-docker run --rm --runtime nvidia --device /dev/video0 \
-  ultralytics/ultralytics:latest-jetson-jetpack6 \
-  python3 -c "
-import torch, cv2
-print('CUDA:', torch.cuda.is_available())
-print('GPU :', torch.cuda.get_device_name(0))
-cap = cv2.VideoCapture(0)
-print('Cam :', cap.isOpened())
-cap.release()
-"
-# attendu : CUDA: True | GPU: Orin | Cam: True
 ```
 
 ### 4. Démarrer la stack
@@ -94,8 +95,6 @@ docker compose up -d
 ```
 
 Grafana est accessible sur `http://<ip-du-pe1103n>:3000`
-
-Le plugin SQLite est installé automatiquement au premier démarrage (~30s).
 
 ---
 
@@ -189,31 +188,9 @@ addresses: admin@votredomaine.com
 
 ---
 
-## Performance optionnelle : export TensorRT
-
-Gain de 2-3× en débit d'inférence. À faire une seule fois.
-
-```bash
-docker compose exec app python /app/export_tensorrt.py
-```
-
-Puis modifier `MODEL_PATH` dans `app/main.py` :
-
-```python
-MODEL_PATH = "/data/yolov8n.engine"
-```
-
-```bash
-docker compose restart app
-```
-
----
-
 ## Maintenance
 
 ### Recapturer la frame de référence (porte fermée)
-
-Utile si l'éclairage a changé et génère de fausses alarmes.
 
 ```bash
 # Assurez-vous que la porte est fermée avant de lancer
@@ -236,8 +213,6 @@ docker compose exec dashboard \
 ```
 
 ### Nettoyage SQLite hebdomadaire (optionnel)
-
-Ajouter en cron sur l'hôte :
 
 ```bash
 # crontab -e
