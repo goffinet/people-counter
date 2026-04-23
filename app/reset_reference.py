@@ -1,53 +1,38 @@
 """
-Recapture la frame de référence (porte fermée) sans redémarrer le conteneur.
-Utile si l'éclairage a changé et génère de fausses alarmes.
+Demande au pipeline (main.py) de recapturer la frame de référence porte.
 
-Récupère la frame via le serveur MJPEG de main.py (port 8080) — la caméra
-n'est pas ouverte directement (elle est déjà tenue par le pipeline).
+Crée un fichier signal que main.py détecte à la prochaine frame traitée
+(< 1 s). Pas d'accès caméra ni réseau — fonctionne pendant que le
+pipeline tourne.
 
 Usage depuis l'hôte :
   docker compose exec app python /app/reset_reference.py
 """
 
-import pickle
+import sys
 import time
-import urllib.request
+from pathlib import Path
 
-import cv2
-import numpy as np
+RESET_SIGNAL = "/data/.reset_reference"
+REF_PATH     = "/data/door_reference.pkl"
 
-DOOR_ROI       = (0.2, 0.1, 0.8, 0.9)
-REF_PATH       = "/data/door_reference.pkl"
-SNAPSHOT_URL   = "http://localhost:8080/snapshot"
-CAPTURE_DELAY  = 3   # secondes pour se préparer
+print("Assurez-vous que la porte est FERMÉE. Recapture dans 3s...")
+time.sleep(3)
 
-print(f"Assurez-vous que la porte est FERMÉE. Capture dans {CAPTURE_DELAY}s...")
-time.sleep(CAPTURE_DELAY)
+mtime_before = Path(REF_PATH).stat().st_mtime if Path(REF_PATH).exists() else None
 
-try:
-    with urllib.request.urlopen(SNAPSHOT_URL, timeout=5) as resp:
-        jpeg_bytes = resp.read()
-except Exception as e:
-    raise RuntimeError(
-        f"Impossible de joindre {SNAPSHOT_URL} : {e}\n"
-        "Vérifiez que le pipeline (main.py) tourne bien dans ce conteneur."
-    )
+Path(RESET_SIGNAL).touch()
+print("Signal envoyé — en attente de la confirmation du pipeline...", end="", flush=True)
 
-frame = cv2.imdecode(np.frombuffer(jpeg_bytes, np.uint8), cv2.IMREAD_COLOR)
-if frame is None:
-    raise RuntimeError("Snapshot reçu mais décodage JPEG échoué.")
+for _ in range(30):   # attente max 3 s
+    time.sleep(0.1)
+    if not Path(RESET_SIGNAL).exists():
+        mtime_after = Path(REF_PATH).stat().st_mtime if Path(REF_PATH).exists() else None
+        if mtime_after != mtime_before:
+            print(" OK")
+            print(f"Nouvelle référence sauvegardée dans {REF_PATH}")
+            sys.exit(0)
 
-h, w = frame.shape[:2]
-x1, y1 = int(DOOR_ROI[0] * w), int(DOOR_ROI[1] * h)
-x2, y2 = int(DOOR_ROI[2] * w), int(DOOR_ROI[3] * h)
-roi_gray = cv2.cvtColor(frame[y1:y2, x1:x2], cv2.COLOR_BGR2GRAY)
-
-with open(REF_PATH, "wb") as f:
-    pickle.dump(roi_gray, f)
-
-debug = frame.copy()
-cv2.rectangle(debug, (x1, y1), (x2, y2), (0, 255, 0), 2)
-cv2.imwrite("/data/roi_check.png", debug)
-
-print(f"Référence sauvegardée dans {REF_PATH}")
-print("Image de vérification : /data/roi_check.png")
+print(" TIMEOUT")
+print("Le pipeline n'a pas répondu dans les 3 s — vérifiez que main.py tourne.")
+sys.exit(1)

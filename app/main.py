@@ -28,6 +28,7 @@ DB             = "/data/counts.db"
 MODEL_PATH     = "/data/yolov8n.pt"      # remplacer par /data/yolov8n.engine après export TRT
 CAMERA_SOURCE  = 0                       # /dev/video0
 REF_PATH       = "/data/door_reference.pkl"
+RESET_SIGNAL   = "/data/.reset_reference"  # créé par reset_reference.py
 DEBUG_PORT     = 8080                    # 0 pour désactiver le serveur de visualisation
 
 LINE_Y         = 0.95                    # ligne de comptage à 95 % de la hauteur
@@ -257,6 +258,14 @@ def main():
 
         # Supprime les tracks qui ne sont plus visibles
         prev_centers = {k: v for k, v in prev_centers.items() if k in active_ids}
+
+        # Recapture de référence demandée par reset_reference.py
+        if Path(RESET_SIGNAL).exists():
+            reference = get_roi_gray(frame, DOOR_ROI)
+            with open(REF_PATH, "wb") as f:
+                pickle.dump(reference, f)
+            Path(RESET_SIGNAL).unlink()
+            print("[INFO] Référence porte recapturée.")
 
         # Détection porte — ne loggue que les changements d'état
         door_status = detect_door(frame, reference, DOOR_ROI)
