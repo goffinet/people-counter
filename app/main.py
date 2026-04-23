@@ -31,9 +31,11 @@ REF_PATH       = "/data/door_reference.pkl"
 RESET_SIGNAL   = "/data/.reset_reference"  # créé par reset_reference.py
 DEBUG_PORT     = 8080                    # 0 pour désactiver le serveur de visualisation
 
-LINE_Y         = 0.95                    # ligne de comptage à 95 % de la hauteur
-DOOR_ROI       = (0.2, 0.1, 0.9, 0.9)    # ROI porte (à ajuster selon cadrage)
-DOOR_THRESHOLD = 25                      # seuil diff frames (augmenter si éclairage variable)
+LINE_Y              = 0.60               # ligne de comptage à 60 % de la hauteur
+DOOR_ROI            = (0.2, 0.1, 0.9, 0.9)  # ROI porte (à ajuster selon cadrage)
+DOOR_PIXEL_DIFF     = 30                 # diff par pixel pour le compter comme "changé" (0-255)
+DOOR_THRESHOLD      = 0.08              # fraction de pixels changés pour déclarer "open" (0.0-1.0)
+DOOR_HYSTERESIS     = 8                 # frames consécutives avant de valider un changement d'état
 REF_DELAY      = 3                       # secondes avant capture de la frame de référence
 
 # ---------------------------------------------------------------------------
@@ -71,9 +73,9 @@ def detect_door(frame: np.ndarray, reference: np.ndarray, roi: tuple) -> str:
     current = get_roi_gray(frame, roi)
     if current.shape != reference.shape:
         current = cv2.resize(current, (reference.shape[1], reference.shape[0]))
-    diff  = cv2.absdiff(reference, current)
-    score = float(np.mean(diff))
-    return "open" if score > DOOR_THRESHOLD else "closed"
+    diff          = cv2.absdiff(reference, current)
+    changed_ratio = float(np.sum(diff > DOOR_PIXEL_DIFF)) / diff.size
+    return "open" if changed_ratio > DOOR_THRESHOLD else "closed"
 
 # ---------------------------------------------------------------------------
 # Utilitaire : sauvegarder une image de vérification du ROI
@@ -206,7 +208,9 @@ def main():
         _start_debug_server(DEBUG_PORT)
 
     prev_centers: dict[int, float] = {}  # track_id → y-centre de la frame précédente
-    door_prev = ""
+    door_prev        = ""
+    door_candidate   = ""
+    door_consec      = 0
 
     print("[INFO] Pipeline démarré.")
 
@@ -267,16 +271,22 @@ def main():
             Path(RESET_SIGNAL).unlink()
             print("[INFO] Référence porte recapturée.")
 
-        # Détection porte — ne loggue que les changements d'état
-        door_status = detect_door(frame, reference, DOOR_ROI)
-        if door_status != door_prev:
+        # Détection porte avec hystérésis
+        raw_status = detect_door(frame, reference, DOOR_ROI)
+        if raw_status == door_candidate:
+            door_consec += 1
+        else:
+            door_candidate = raw_status
+            door_consec    = 1
+        if door_consec >= DOOR_HYSTERESIS and door_candidate != door_prev:
             db.execute(
                 "INSERT INTO door_status (ts, status) VALUES (?, ?)",
-                (int(time.time()), door_status),
+                (int(time.time()), door_candidate),
             )
             db.commit()
-            print(f"[DOOR] {door_status.upper()}")
-            door_prev = door_status
+            print(f"[DOOR] {door_candidate.upper()}")
+            door_prev  = door_candidate
+            door_consec = 0
 
         # Mise à jour du buffer de visualisation
         if DEBUG_PORT:
