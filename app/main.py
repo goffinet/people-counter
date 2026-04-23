@@ -30,10 +30,10 @@ CAMERA_SOURCE  = 0                       # /dev/video0
 REF_PATH       = "/data/door_reference.pkl"
 DEBUG_PORT     = 8080                    # 0 pour désactiver le serveur de visualisation
 
-LINE_Y         = 0.8                    # ligne de comptage à 80 % de la hauteur
-DOOR_ROI       = (0.2, 0.1, 0.8, 0.9)  # ROI porte (à ajuster selon cadrage)
-DOOR_THRESHOLD = 25                     # seuil diff frames (augmenter si éclairage variable)
-REF_DELAY      = 3                      # secondes avant capture de la frame de référence
+LINE_Y         = 0.95                    # ligne de comptage à 95 % de la hauteur
+DOOR_ROI       = (0.2, 0.1, 0.9, 0.9)    # ROI porte (à ajuster selon cadrage)
+DOOR_THRESHOLD = 25                      # seuil diff frames (augmenter si éclairage variable)
+REF_DELAY      = 3                       # secondes avant capture de la frame de référence
 
 # ---------------------------------------------------------------------------
 # Base de données
@@ -68,8 +68,10 @@ def get_roi_gray(frame: np.ndarray, roi: tuple) -> np.ndarray:
 
 def detect_door(frame: np.ndarray, reference: np.ndarray, roi: tuple) -> str:
     current = get_roi_gray(frame, roi)
-    diff    = cv2.absdiff(reference, current)
-    score   = float(np.mean(diff))
+    if current.shape != reference.shape:
+        current = cv2.resize(current, (reference.shape[1], reference.shape[0]))
+    diff  = cv2.absdiff(reference, current)
+    score = float(np.mean(diff))
     return "open" if score > DOOR_THRESHOLD else "closed"
 
 # ---------------------------------------------------------------------------
