@@ -16,7 +16,7 @@ import pickle
 import threading
 import numpy as np
 from pathlib import Path
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from ultralytics import YOLO
 
@@ -30,7 +30,7 @@ CAMERA_SOURCE  = 0                       # /dev/video0
 REF_PATH       = "/data/door_reference.pkl"
 DEBUG_PORT     = 8080                    # 0 pour désactiver le serveur de visualisation
 
-LINE_Y         = 0.5                    # ligne de comptage à 50 % de la hauteur
+LINE_Y         = 0.2                    # ligne de comptage à 20 % de la hauteur
 DOOR_ROI       = (0.2, 0.1, 0.8, 0.9)  # ROI porte (à ajuster selon cadrage)
 DOOR_THRESHOLD = 25                     # seuil diff frames (augmenter si éclairage variable)
 REF_DELAY      = 3                      # secondes avant capture de la frame de référence
@@ -170,7 +170,7 @@ class _MJPEGHandler(BaseHTTPRequestHandler):
 
 
 def _start_debug_server(port: int) -> None:
-    server = HTTPServer(("0.0.0.0", port), _MJPEGHandler)
+    server = ThreadingHTTPServer(("0.0.0.0", port), _MJPEGHandler)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     print(f"[INFO] Visualisation live : http://0.0.0.0:{port}  (snapshot : /snapshot)")
 
