@@ -73,9 +73,19 @@
       "title": "Statut actuel de la porte",
       "type": "stat",
       "gridPos": { "x": 18, "y": 0, "w": 6, "h": 4 },
-      "options": { "colorMode": "background", "graphMode": "none", "textMode": "value" },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "value",
+        "reduceOptions": {
+          "calcs": ["last"],
+          "fields": "/.*/",
+          "values": false
+        }
+      },
       "fieldConfig": {
         "defaults": {
+          "color": { "mode": "fixed", "fixedColor": "text" },
           "mappings": [{
             "type": "value",
             "options": {
