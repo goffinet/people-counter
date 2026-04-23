@@ -349,8 +349,8 @@ import sqlite3
 con = sqlite3.connect('/data/counts.db')
 con.execute('DELETE FROM events')
 con.execute('DELETE FROM door_status')
-con.execute('VACUUM')
 con.commit()
+con.execute('VACUUM')
 print('Base remise à zéro.')
 "
 ```
