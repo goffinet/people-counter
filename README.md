@@ -341,6 +341,20 @@ for row in con.execute('SELECT direction, count(*) FROM events GROUP BY directio
 "
 ```
 
+### Remettre les compteurs à zéro
+
+```bash
+docker compose exec app python3 -c "
+import sqlite3
+con = sqlite3.connect('/data/counts.db')
+con.execute('DELETE FROM events')
+con.execute('DELETE FROM door_status')
+con.execute('VACUUM')
+con.commit()
+print('Base remise à zéro.')
+"
+```
+
 ### Nettoyage SQLite hebdomadaire (optionnel)
 
 ```bash

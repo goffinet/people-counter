@@ -31,8 +31,8 @@ REF_PATH       = "/data/door_reference.pkl"
 RESET_SIGNAL   = "/data/.reset_reference"  # créé par reset_reference.py
 DEBUG_PORT     = 8080                    # 0 pour désactiver le serveur de visualisation
 
-LINE_Y              = 0.60               # ligne de comptage à 60 % de la hauteur
-DOOR_ROI            = (0.2, 0.1, 0.9, 0.9)  # ROI porte (à ajuster selon cadrage)
+LINE_Y              = 0.90               # ligne de comptage à x % de la hauteur
+DOOR_ROI            = (0.2, 0.1, 0.3, 0.9)  # ROI porte (à ajuster selon cadrage)
 DOOR_PIXEL_DIFF     = 30                 # diff par pixel pour le compter comme "changé" (0-255)
 DOOR_THRESHOLD      = 0.08              # fraction de pixels changés pour déclarer "open" (0.0-1.0)
 DOOR_HYSTERESIS     = 8                 # frames consécutives avant de valider un changement d'état
