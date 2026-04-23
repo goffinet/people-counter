@@ -11,7 +11,7 @@ Stack de détection : **YOLOv8n + ByteTrack (Ultralytics)**
 
 | Branche | Stack de détection | Image Docker |
 | --- | --- | --- |
-| **`feature/yolo`** | **YOLOv8n + ByteTrack (Ultralytics)** | **`ultralytics/ultralytics:latest-jetson-jetpack6`** |
+| **`feature/yolo`** | **YOLOv8n + ByteTrack (Ultralytics)** | **`people-counter-app:latest` (build local)** |
 | `feature/nanoowl` | OWL-ViT TensorRT + tracker IoU (NanoOWL) | `dustynv/nanoowl:r36.4.0` |
 | `feature/deepstream` | PeopleNet v2.6 + NvDCF (DeepStream 7) | `nvcr.io/nvidia/deepstream:7.0-samples` |
 
@@ -79,10 +79,13 @@ Pipeline entièrement GPU (GStreamer + TensorRT INT8), modèle PeopleNet spécia
 
 ```text
 people-counter/
+├── Dockerfile                 # image dérivée ultralytics + lapx (ByteTrack)
 ├── docker-compose.yml
+├── wheels/
+│   └── lapx-*.whl             # dépendance ByteTrack pré-téléchargée (aarch64)
 ├── app/
-│   ├── main.py                # pipeline principal YOLOv8 + ByteTrack
-│   ├── debug_view.py          # visualisation live pour calibrage (port 8080)
+│   ├── main.py                # pipeline YOLOv8 + ByteTrack + serveur MJPEG (port 8080)
+│   ├── debug_view.py          # visualisation standalone (pipeline arrêté uniquement)
 │   ├── reset_reference.py     # recapture frame de référence porte
 │   └── export_tensorrt.py     # export moteur TensorRT (optionnel)
 └── grafana/
@@ -125,28 +128,32 @@ sudo usermod -aG video $USER
 # se déconnecter / reconnecter pour appliquer le groupe
 ```
 
-### 4. Démarrer la stack
+### 4. Télécharger le modèle YOLOv8n
+
+Le conteneur n'a pas accès internet. Télécharger le modèle depuis l'hôte :
 
 ```bash
-docker compose pull
+curl -L https://github.com/ultralytics/assets/releases/download/v8.4.0/yolov8n.pt \
+     -o /tmp/yolov8n.pt
+```
+
+Il sera copié dans le volume `/data` au premier `docker compose up`.
+
+### 5. Construire l'image et démarrer la stack
+
+```bash
+docker compose build          # construit people-counter-app:latest (~2 min)
 docker compose up -d
+docker cp /tmp/yolov8n.pt people-counter-app-1:/data/yolov8n.pt
 ```
 
 > Le plugin Grafana SQLite (`frser-sqlite-datasource`) est fourni dans `grafana/plugins/`
 > et chargé localement — aucun accès internet requis pour Grafana.
 
-### 5. Calibrer la ligne de comptage et le ROI porte
+### 6. Calibrer la ligne de comptage et le ROI porte
 
-Avant de valider le déploiement, vérifier que `LINE_Y` et `DOOR_ROI` correspondent
-au cadrage réel de la caméra.
-
-**Lancer le serveur de visualisation :**
-
-```bash
-docker compose exec -d app python /app/debug_view.py
-```
-
-**Ouvrir dans un navigateur :**
+Le serveur de visualisation démarre automatiquement avec le pipeline.
+Ouvrir dans un navigateur :
 
 ```
 http://<ip-du-pe1103n>:8080
@@ -156,19 +163,13 @@ Le flux live affiche :
 - **Ligne rouge** = position de `LINE_Y` (ligne virtuelle de comptage)
 - **Rectangle vert** = zone `DOOR_ROI` (zone analysée pour détecter la porte)
 
-**Tester d'autres valeurs sans modifier le code :**
-
-```bash
-docker compose exec -d app python /app/debug_view.py --line-y 0.4 --roi 0.15,0.05,0.85,0.95
-```
-
 **Récupérer une image fixe :**
 
 ```bash
 curl http://<ip-du-pe1103n>:8080/snapshot -o snapshot.jpg
 ```
 
-Une fois les valeurs correctes identifiées, les reporter dans `app/main.py` :
+Une fois les valeurs correctes identifiées, les modifier dans `app/main.py` :
 
 ```python
 LINE_Y   = 0.4
@@ -181,7 +182,7 @@ Puis redémarrer le pipeline :
 docker compose restart app
 ```
 
-### 6. Capturer la référence porte (porte fermée)
+### 7. Capturer la référence porte (porte fermée)
 
 La frame de référence sert à détecter si la porte est ouverte ou fermée.
 Elle est capturée automatiquement au premier démarrage.
@@ -195,7 +196,7 @@ docker compose exec app python /app/reset_reference.py
 La nouvelle référence est sauvegardée dans `/data/door_reference.pkl`
 et une image de vérification dans `/data/roi_check.png`.
 
-### 7. Vérifier le dashboard Grafana
+### 8. Vérifier le dashboard Grafana
 
 Grafana est accessible sur `http://<ip-du-pe1103n>:3000`
 
@@ -216,7 +217,7 @@ LINE_Y = 0.5   # 0.5 = milieu de l'image
 
 Une personne qui descend (y croissant) en franchissant la ligne est comptée **entrée**.
 Une personne qui monte (y décroissant) est comptée **sortie**.
-Ajuster selon l'orientation de la caméra. Utiliser `debug_view.py` pour visualiser.
+Ajuster selon l'orientation de la caméra. Vérifier via `http://<ip>:8080`.
 
 ### Zone de détection porte (`DOOR_ROI`)
 
@@ -226,7 +227,7 @@ Coordonnées en fractions de l'image `(x1, y1, x2, y2)`.
 DOOR_ROI = (0.2, 0.1, 0.8, 0.9)  # valeur par défaut
 ```
 
-Utiliser `debug_view.py` pour vérifier que le rectangle vert couvre bien la porte.
+Vérifier que le rectangle vert couvre bien la porte via `http://<ip>:8080`.
 
 ### Sensibilité détection porte (`DOOR_THRESHOLD`)
 
@@ -240,7 +241,7 @@ DOOR_THRESHOLD = 25   # valeur par défaut
 ### Modèle de détection (`MODEL_PATH`)
 
 ```python
-MODEL_PATH = "yolov8n.pt"           # PyTorch — téléchargé au premier démarrage
+MODEL_PATH = "/data/yolov8n.pt"     # PyTorch — copié dans /data au démarrage (étape 4)
 MODEL_PATH = "/data/yolov8n.engine" # TensorRT — après export (voir section Optimisation)
 ```
 
@@ -361,11 +362,11 @@ docker compose ps   # doit afficher "running" pour app et dashboard
 | --- | --- |
 | `CUDA: False` dans le conteneur | Vérifier `--runtime nvidia` et `daemon.json` |
 | Caméra non détectée | Vérifier droits groupe `video` et `devices:` dans compose |
-| `yolov8n.pt` ne se télécharge pas | Le conteneur n'a pas accès internet — copier manuellement : `docker cp yolov8n.pt people-counter-app-1:/usr/src/app/` |
+| `yolov8n.pt` ne se télécharge pas | Le conteneur n'a pas accès internet — suivre l'étape 4 : télécharger sur l'hôte puis `docker cp /tmp/yolov8n.pt people-counter-app-1:/data/` |
 | Grafana ne démarre pas | Vérifier les logs : `docker compose logs dashboard` — si erreur plugin, le répertoire `grafana/plugins/` doit être présent |
 | Grafana vide au démarrage | Attendre 15-20s, puis rafraîchir |
 | Fausses alarmes porte | Augmenter `DOOR_THRESHOLD` ou recapturer la référence |
-| Double comptage | Ajuster `LINE_Y` avec `debug_view.py` |
+| Double comptage | Ajuster `LINE_Y` via le flux live `http://<ip>:8080` |
 | Dashboard Grafana corrompu | Supprimer le volume et redémarrer : `docker compose down -v && docker compose up -d` |
 
 ---
