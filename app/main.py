@@ -32,7 +32,7 @@ RESET_SIGNAL   = "/data/.reset_reference"  # créé par reset_reference.py
 DEBUG_PORT     = 8080                    # 0 pour désactiver le serveur de visualisation
 
 LINE_Y              = 0.90               # ligne de comptage à x % de la hauteur
-DOOR_ROI            = (0.2, 0.1, 0.3, 0.9)  # ROI porte (à ajuster selon cadrage)
+DOOR_ROI            = (0.5, 0.1, 0.3, 0.9)  # ROI porte (à ajuster selon cadrage)
 DOOR_PIXEL_DIFF     = 30                 # diff par pixel pour le compter comme "changé" (0-255)
 DOOR_THRESHOLD      = 0.08              # fraction de pixels changés pour déclarer "open" (0.0-1.0)
 DOOR_HYSTERESIS     = 8                 # frames consécutives avant de valider un changement d'état
@@ -67,7 +67,11 @@ def get_roi_gray(frame: np.ndarray, roi: tuple) -> np.ndarray:
     h, w = frame.shape[:2]
     x1, y1 = int(roi[0] * w), int(roi[1] * h)
     x2, y2 = int(roi[2] * w), int(roi[3] * h)
-    return cv2.cvtColor(frame[y1:y2, x1:x2], cv2.COLOR_BGR2GRAY)
+    x2, y2 = max(x1 + 1, x2), max(y1 + 1, y2)
+    crop = frame[y1:y2, x1:x2]
+    if crop.size == 0:
+        raise ValueError(f"ROI vide : frame={w}x{h}, roi={roi} → [{x1}:{x2},{y1}:{y2}]")
+    return cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
 
 def detect_door(frame: np.ndarray, reference: np.ndarray, roi: tuple) -> str:
     current = get_roi_gray(frame, roi)
@@ -233,7 +237,7 @@ def main():
 
     while True:
         ok, frame = cap.read()
-        if not ok:
+        if not ok or frame is None or frame.size == 0:
             print("[WARN] Frame manquante, tentative suivante...")
             time.sleep(0.05)
             continue
