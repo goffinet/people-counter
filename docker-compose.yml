@@ -1,10 +1,17 @@
 services:
   app:
-    image: ultralytics/ultralytics:latest-jetson-jetpack6
+    build:
+      context: .
+      network: host
+    image: people-counter-app:latest
     runtime: nvidia
     ipc: host
     environment:
       - NVIDIA_VISIBLE_DEVICES=all
+      - YOLO_CONFIG_DIR=/data/ultralytics
+      - YOLO_AUTOINSTALL=false
+    ports:
+      - "8080:8080"
     devices:
       - /dev/video0:/dev/video0
     volumes:
@@ -14,14 +21,13 @@ services:
     restart: unless-stopped
 
   dashboard:
-    image: grafana/grafana:latest
+    image: grafana/grafana:10.4.8
     ports:
       - "3000:3000"
     environment:
-      - GF_INSTALL_PLUGINS=frser-sqlite-datasource
       - GF_AUTH_ANONYMOUS_ENABLED=true
       - GF_AUTH_ANONYMOUS_ORG_ROLE=Viewer
-      - GF_SERVER_ROOT_URL=http://0.0.0.0:3000
+      - GF_PLUGINS_ALLOW_LOADING_UNSIGNED_PLUGINS=frser-sqlite-datasource
       # --- SMTP (décommenter et adapter pour les alertes email) ---
       # - GF_SMTP_ENABLED=true
       # - GF_SMTP_HOST=smtp.votreserveur.com:587
@@ -33,6 +39,7 @@ services:
       - data:/data:ro
       - ./grafana/provisioning:/etc/grafana/provisioning
       - grafana_data:/var/lib/grafana
+      - ./grafana/plugins:/var/lib/grafana/plugins
     restart: unless-stopped
 
 volumes:

@@ -15,6 +15,7 @@ import time
 import pickle
 import numpy as np
 from pathlib import Path
+
 from ultralytics import YOLO
 
 # ---------------------------------------------------------------------------
@@ -22,7 +23,7 @@ from ultralytics import YOLO
 # ---------------------------------------------------------------------------
 
 DB             = "/data/counts.db"
-MODEL_PATH     = "yolov8n.pt"           # remplacer par /data/yolov8n.engine après export TRT
+MODEL_PATH     = "/data/yolov8n.pt"      # remplacer par /data/yolov8n.engine après export TRT
 CAMERA_SOURCE  = 0                       # /dev/video0
 REF_PATH       = "/data/door_reference.pkl"
 

@@ -50,6 +50,9 @@ groups:
                 type: frser-sqlite-datasource
                 uid: SQLite
           - refId: C
+            relativeTimeRange:
+              from: 300
+              to: 0
             type: classic_conditions
             model:
               conditions:
@@ -75,6 +78,9 @@ groups:
         data:
           - refId: A
             queryType: table
+            relativeTimeRange:
+              from: 300
+              to: 0
             model:
               rawQueryText: >
                 SELECT
@@ -86,6 +92,9 @@ groups:
                 type: frser-sqlite-datasource
                 uid: SQLite
           - refId: C
+            relativeTimeRange:
+              from: 300
+              to: 0
             type: classic_conditions
             model:
               conditions:

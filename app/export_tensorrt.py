@@ -13,7 +13,7 @@ from ultralytics import YOLO
 import shutil
 
 print("[INFO] Chargement du modèle PyTorch...")
-model = YOLO("yolov8n.pt")
+model = YOLO("/data/yolov8n.pt")
 
 print("[INFO] Export TensorRT en cours (peut prendre 5-10 min sur Jetson Orin)...")
 model.export(
