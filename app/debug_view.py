@@ -1,16 +1,19 @@
 """
-Serveur de visualisation en direct pour calibrer LINE_Y et DOOR_ROI.
+Serveur de visualisation standalone pour calibrer LINE_Y et DOOR_ROI.
+
+NOTE : main.py intègre déjà un serveur MJPEG sur le port DEBUG_PORT (8080).
+       Ce script est utile uniquement quand le pipeline est ARRÊTÉ
+       (main.py détient la caméra exclusivement).
+
+Utilisation :
+  docker compose stop app
+  docker compose run --rm -p 8080:8080 app python /app/debug_view.py --line-y 0.4
+  # ouvrir http://<ip>:8080
+  docker compose up -d app   # relancer le pipeline
 
 Ouvrir http://<ip-du-pe1103n>:8080 dans un navigateur pour voir :
   - rectangle VERT  = DOOR_ROI
   - ligne ROUGE     = LINE_Y
-
-Accepte des valeurs override en argument pour tester sans redémarrer main.py :
-  python /app/debug_view.py --line-y 0.4 --roi 0.15,0.05,0.85,0.95 --port 8080
-
-Utilisation depuis l'hôte :
-  docker compose exec -d app python /app/debug_view.py
-  # puis ouvrir http://<ip>:8080
 """
 
 import argparse

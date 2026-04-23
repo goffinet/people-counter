@@ -13,8 +13,10 @@ import cv2
 import sqlite3
 import time
 import pickle
+import threading
 import numpy as np
 from pathlib import Path
+from http.server import BaseHTTPRequestHandler, HTTPServer
 
 from ultralytics import YOLO
 
@@ -26,6 +28,7 @@ DB             = "/data/counts.db"
 MODEL_PATH     = "/data/yolov8n.pt"      # remplacer par /data/yolov8n.engine après export TRT
 CAMERA_SOURCE  = 0                       # /dev/video0
 REF_PATH       = "/data/door_reference.pkl"
+DEBUG_PORT     = 8080                    # 0 pour désactiver le serveur de visualisation
 
 LINE_Y         = 0.5                    # ligne de comptage à 50 % de la hauteur
 DOOR_ROI       = (0.2, 0.1, 0.8, 0.9)  # ROI porte (à ajuster selon cadrage)
@@ -102,6 +105,76 @@ def load_or_capture_reference(frame: np.ndarray) -> np.ndarray:
     return ref
 
 # ---------------------------------------------------------------------------
+# Serveur MJPEG de visualisation (port DEBUG_PORT)
+# Accessible sur http://<ip>:8080 pendant que le pipeline tourne.
+# ---------------------------------------------------------------------------
+
+_debug_lock:  threading.Lock = threading.Lock()
+_debug_frame: bytes | None   = None
+
+
+def _annotate_debug(frame: np.ndarray, line_px: int) -> bytes:
+    h, w = frame.shape[:2]
+    out = frame.copy()
+    cv2.line(out, (0, line_px), (w, line_px), (0, 0, 255), 2)
+    cv2.putText(out, f"LINE_Y={LINE_Y:.2f}", (10, line_px - 8),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
+    x1, y1 = int(DOOR_ROI[0] * w), int(DOOR_ROI[1] * h)
+    x2, y2 = int(DOOR_ROI[2] * w), int(DOOR_ROI[3] * h)
+    cv2.rectangle(out, (x1, y1), (x2, y2), (0, 255, 0), 2)
+    cv2.putText(out, f"DOOR_ROI={DOOR_ROI}", (x1, y1 - 8),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 255, 0), 2)
+    _, jpeg = cv2.imencode(".jpg", out, [cv2.IMWRITE_JPEG_QUALITY, 75])
+    return jpeg.tobytes()
+
+
+class _MJPEGHandler(BaseHTTPRequestHandler):
+    def log_message(self, *_):
+        pass
+
+    def do_GET(self):
+        if self.path == "/snapshot":
+            self._snapshot()
+        else:
+            self._stream()
+
+    def _snapshot(self):
+        with _debug_lock:
+            jpeg = _debug_frame
+        if jpeg is None:
+            self.send_response(503)
+            self.end_headers()
+            return
+        self.send_response(200)
+        self.send_header("Content-Type", "image/jpeg")
+        self.send_header("Content-Length", str(len(jpeg)))
+        self.end_headers()
+        self.wfile.write(jpeg)
+
+    def _stream(self):
+        self.send_response(200)
+        self.send_header("Content-Type", "multipart/x-mixed-replace; boundary=frame")
+        self.end_headers()
+        try:
+            while True:
+                with _debug_lock:
+                    jpeg = _debug_frame
+                if jpeg:
+                    self.wfile.write(
+                        b"--frame\r\nContent-Type: image/jpeg\r\n\r\n"
+                        + jpeg + b"\r\n"
+                    )
+                time.sleep(0.05)
+        except (BrokenPipeError, ConnectionResetError):
+            pass
+
+
+def _start_debug_server(port: int) -> None:
+    server = HTTPServer(("0.0.0.0", port), _MJPEGHandler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    print(f"[INFO] Visualisation live : http://0.0.0.0:{port}  (snapshot : /snapshot)")
+
+# ---------------------------------------------------------------------------
 # Pipeline principal
 # ---------------------------------------------------------------------------
 
@@ -123,8 +196,11 @@ def main():
     reference = load_or_capture_reference(frame)
     save_roi_check(frame, DOOR_ROI)
 
-    h = frame.shape[0]
+    h, w   = frame.shape[:2]
     line_px = int(h * LINE_Y)
+
+    if DEBUG_PORT:
+        _start_debug_server(DEBUG_PORT)
 
     prev_centers: dict[int, float] = {}  # track_id → y-centre de la frame précédente
     door_prev = ""
@@ -190,6 +266,12 @@ def main():
             db.commit()
             print(f"[DOOR] {door_status.upper()}")
             door_prev = door_status
+
+        # Mise à jour du buffer de visualisation
+        if DEBUG_PORT:
+            global _debug_frame
+            with _debug_lock:
+                _debug_frame = _annotate_debug(frame, line_px)
 
     cap.release()
     db.close()
