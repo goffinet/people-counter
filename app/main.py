@@ -180,6 +180,23 @@ def _start_debug_server(port: int) -> None:
     print(f"[INFO] Visualisation live : http://0.0.0.0:{port}  (snapshot : /snapshot)")
 
 # ---------------------------------------------------------------------------
+# Chevauchement personne / ROI porte
+# ---------------------------------------------------------------------------
+
+def _person_overlaps_roi(boxes, roi: tuple, frame_shape: tuple) -> bool:
+    """Retourne True si au moins une boîte YOLO chevauche le ROI porte."""
+    if boxes is None or boxes.xyxy is None or len(boxes.xyxy) == 0:
+        return False
+    h, w = frame_shape[:2]
+    rx1, ry1 = int(roi[0] * w), int(roi[1] * h)
+    rx2, ry2 = int(roi[2] * w), int(roi[3] * h)
+    for xyxy in boxes.xyxy.cpu().numpy():
+        bx1, by1, bx2, by2 = int(xyxy[0]), int(xyxy[1]), int(xyxy[2]), int(xyxy[3])
+        if bx1 < rx2 and bx2 > rx1 and by1 < ry2 and by2 > ry1:
+            return True
+    return False
+
+# ---------------------------------------------------------------------------
 # Pipeline principal
 # ---------------------------------------------------------------------------
 
@@ -271,8 +288,9 @@ def main():
             Path(RESET_SIGNAL).unlink()
             print("[INFO] Référence porte recapturée.")
 
-        # Détection porte avec hystérésis
-        raw_status = detect_door(frame, reference, DOOR_ROI)
+        # Détection porte — ignorée si une personne chevauche le ROI
+        person_in_roi = _person_overlaps_roi(boxes, DOOR_ROI, frame.shape)
+        raw_status = detect_door(frame, reference, DOOR_ROI) if not person_in_roi else door_prev or "closed"
         if raw_status == door_candidate:
             door_consec += 1
         else:
