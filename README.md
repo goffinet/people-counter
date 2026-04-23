@@ -333,17 +333,20 @@ docker compose logs -f dashboard  # Grafana
 ### Compter les événements depuis la base
 
 ```bash
-docker compose exec dashboard \
-  sqlite3 /data/counts.db \
-  "SELECT direction, count(*) FROM events GROUP BY direction;"
+docker compose exec app python3 -c "
+import sqlite3
+con = sqlite3.connect('/data/counts.db')
+for row in con.execute('SELECT direction, count(*) FROM events GROUP BY direction'):
+    print(row)
+"
 ```
 
 ### Nettoyage SQLite hebdomadaire (optionnel)
 
 ```bash
 # crontab -e
-0 3 * * 0 docker compose -f /chemin/vers/docker-compose.yml exec -T dashboard \
-  sqlite3 /data/counts.db "VACUUM"
+0 3 * * 0 docker compose -f /chemin/vers/docker-compose.yml exec -T app \
+  python3 -c "import sqlite3; sqlite3.connect('/data/counts.db').execute('VACUUM')"
 ```
 
 ### Vérifier la persistance après reboot
