@@ -32,7 +32,11 @@ services:
   # ---------------------------------------------------------------------------
   app-deepstream:
     profiles: [deepstream]
-    image: nvcr.io/nvidia/deepstream:9.0-samples-multiarch
+    build:
+      context: .
+      dockerfile: Dockerfile.deepstream
+      network: host
+    image: people-counter-deepstream:latest
     runtime: nvidia
     ipc: host
     environment:

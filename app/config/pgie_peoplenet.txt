@@ -1,13 +1,16 @@
 [property]
 gpu-id=0
 
-# Modèle PeopleNet v2.6 livré avec DeepStream samples
-# Chemin dans l'image nvcr.io/nvidia/deepstream:9.0-samples-multiarch
-tlt-encoded-model=/opt/nvidia/deepstream/deepstream/samples/models/tao_pretrained_models/peoplenet/resnet34_peoplenet_int8.etlt
+# Modèle PeopleNet v2.6.3 (ONNX) — à télécharger depuis NGC (voir README)
+# Placer le fichier à l'emplacement suivant sur l'hôte avant de démarrer :
+#   <volume data>/models/peoplenet/resnet34_peoplenet_int8.etlt
+#   <volume data>/models/peoplenet/peoplenet_labels.txt
+
+tlt-encoded-model=/data/models/peoplenet/resnet34_peoplenet_int8.etlt
 tlt-model-key=tlt_encode
 
 # Moteur TensorRT compilé au premier démarrage (~5 min) et mis en cache dans /data
-model-engine-file=/data/models/peoplenet_b1_int8.engine
+model-engine-file=/data/models/peoplenet/peoplenet_b1_int8.engine
 
 labelfile-path=/app/config/peoplenet_labels.txt
 

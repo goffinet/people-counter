@@ -16,7 +16,7 @@ docker compose --profile deepstream  up -d   # PeopleNet v2.6 + NvDCF
 
 | Critère | YOLO (`--profile yolo`) | DeepStream (`--profile deepstream`) |
 | --- | --- | --- |
-| Image Docker | build local (`Dockerfile`) | `nvcr.io/nvidia/deepstream:9.0-samples-multiarch` |
+| Image Docker | build local (`Dockerfile`) | `nvcr.io/nvidia/deepstream:7.0-samples-multiarch (+ Dockerfile.deepstream)` |
 | Modèle | YOLOv8n (COCO) | PeopleNet v2.6 (ResNet34, dédié piétons) |
 | Tracker | ByteTrack (intégré Ultralytics) | NvDCF (production, robuste aux occlusions) |
 | Pipeline | Python + OpenCV | GStreamer + pyds (GPU bout en bout) |
@@ -380,7 +380,7 @@ Un `tee` distribue le flux à deux branches indépendantes.
 
 #### 1. S'authentifier sur le registre NVIDIA NGC
 
-L'image DeepStream est hébergée sur `nvcr.io` et nécessite un compte NVIDIA NGC.
+L'image de base DeepStream est hébergée sur `nvcr.io`.
 
 1. Créer un compte sur [https://ngc.nvidia.com](https://ngc.nvidia.com)
 2. Générer une clé API : menu utilisateur → **Setup** → **Generate API Key**
@@ -392,20 +392,51 @@ docker login nvcr.io
 # Password : <votre-clé-api>
 ```
 
-#### 2. Tirer l'image DeepStream
+#### 2. Télécharger le modèle PeopleNet
+
+Le modèle PeopleNet v2.6 n'est pas inclus dans l'image Docker — il doit être téléchargé séparément depuis NVIDIA TAO.
 
 ```bash
-docker compose --profile deepstream pull
+# Créer le répertoire modèle dans le volume data
+mkdir -p /tmp/peoplenet
+
+# Télécharger depuis le dépôt TAO (nécessite un compte NGC)
+# Option A : via NGC CLI (si installé)
+ngc registry model download-version \
+  "nvidia/tao/peoplenet:deployable_quantized_v2.6" \
+  --dest /tmp/peoplenet
+
+# Option B : téléchargement direct du fichier etlt
+# Accéder à https://catalog.ngc.nvidia.com/orgs/nvidia/teams/tao/models/peoplenet
+# → Télécharger "deployable_quantized_v2.6" → resnet34_peoplenet_int8.etlt
 ```
 
-#### 2. Démarrer
+Copier le modèle dans le volume Docker :
 
 ```bash
+docker compose --profile deepstream run --rm app-deepstream \
+  mkdir -p /data/models/peoplenet
+docker cp /tmp/peoplenet/resnet34_peoplenet_int8.etlt \
+  $(docker compose --profile deepstream ps -q app-deepstream):/data/models/peoplenet/
+```
+
+> Alternativement, copier le fichier directement dans le volume nommé `data` :
+> ```bash
+> docker run --rm -v people-counter_data:/data busybox mkdir -p /data/models/peoplenet
+> docker run --rm -v people-counter_data:/data \
+>   -v /tmp/peoplenet:/src busybox \
+>   cp /src/resnet34_peoplenet_int8.etlt /data/models/peoplenet/
+> ```
+
+#### 3. Construire l'image et démarrer
+
+```bash
+docker compose --profile deepstream build   # ~5 min (télécharge pyds, installe deps)
 docker compose --profile deepstream up -d
 ```
 
 **Premier démarrage :** `nvinfer` compile le modèle PeopleNet en moteur TensorRT INT8.
-Durée : ~5 min sur Jetson Orin. Le moteur est mis en cache dans `/data/models/`.
+Durée : ~5 min sur Jetson Orin. Le moteur est mis en cache dans `/data/models/peoplenet/`.
 
 #### 3. Vérifier le ROI porte
 
