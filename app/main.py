@@ -31,17 +31,22 @@ REF_PATH       = "/data/door_reference.pkl"
 RESET_SIGNAL   = "/data/.reset_reference"  # créé par reset_reference.py
 DEBUG_PORT     = 8080                    # 0 pour désactiver le serveur de visualisation
 
-LINE_Y              = 0.63             # ligne de comptage à x % de la hauteur
+LINE_Y              = 0.79             # ligne de comptage à x % de la hauteur
 DOOR_ROI            = (0.4, 0.1, 0.6, 0.9)  # ROI porte (à ajuster selon cadrage)
 DOOR_PIXEL_DIFF     = 30                 # diff par pixel pour le compter comme "changé" (0-255)
 DOOR_THRESHOLD      = 0.35              # fraction de pixels changés pour déclarer "open" (0.0-1.0)
-DOOR_HYSTERESIS     = 25                # frames consécutives avant de valider un changement d'état
+DOOR_HYSTERESIS     = 20                # frames consécutives avant de valider un changement d'état
 REF_DELAY           = 3                 # secondes avant capture de la frame de référence
-COUNT_ONLY_DOOR_OPEN = True            # True = ne compter que quand la porte est ouverte
+COUNT_ONLY_DOOR_OPEN = False            # True = ne compter que quand la porte est ouverte
 
 # ---------------------------------------------------------------------------
 # Base de données
 # ---------------------------------------------------------------------------
+
+def _ts() -> str:
+    t = time.time()
+    ms = int((t % 1) * 1000)
+    return time.strftime("%H:%M:%S", time.localtime(t)) + f".{ms:03d}"
 
 def init_db() -> sqlite3.Connection:
     con = sqlite3.connect(DB)
@@ -279,7 +284,7 @@ def main():
             n_det = len(boxes.xyxy) if boxes is not None and boxes.xyxy is not None else 0
             n_id  = len(boxes.id)   if boxes is not None and boxes.id  is not None else 0
             confs = boxes.conf.cpu().tolist() if boxes is not None and boxes.conf is not None else []
-            print(f"[DBG] frame={main._dbg_frame_count} détections={n_det} tracks={n_id} line_px={line_px} conf={[round(c,2) for c in confs]}")
+            print(f"[DBG {_ts()}] frame={main._dbg_frame_count} détections={n_det} tracks={n_id} line_px={line_px} conf={[round(c,2) for c in confs]}")
 
         if boxes is not None and boxes.id is not None:
             ids   = boxes.id.int().cpu().tolist()
@@ -288,7 +293,7 @@ def main():
             for tid, xyxy in zip(ids, xyxys):
                 active_ids.add(tid)
                 cy = float((xyxy[1] + xyxy[3]) / 2)
-                print(f"[TRACK] id={tid} cy={cy:.0f} line={line_px} conf={float(boxes.conf[ids.index(tid)]):.2f}")
+                print(f"[TRACK {_ts()}] id={tid} cy={cy:.0f} line={line_px} conf={float(boxes.conf[ids.index(tid)]):.2f}")
 
                 if tid in prev_centers:
                     prev_cy = prev_centers[tid]
@@ -306,7 +311,7 @@ def main():
                             (int(time.time()), direction),
                         )
                         db.commit()
-                        print(f"[EVENT] {direction.upper()} — track {tid}")
+                        print(f"[EVENT {_ts()}] {direction.upper()} — track {tid}")
 
                 prev_centers[tid] = cy
 
@@ -335,7 +340,7 @@ def main():
                 (int(time.time()), door_candidate),
             )
             db.commit()
-            print(f"[DOOR] {door_candidate.upper()}")
+            print(f"[DOOR {_ts()}] {door_candidate.upper()}")
             door_prev  = door_candidate
             door_consec = 0
 
