@@ -325,6 +325,20 @@ Réglage typique selon l'environnement :
 | Éclairage variable (soleil) | 40 | 0.12 | 10 |
 | Porte peu contrastée | 15 | 0.05 | 8 |
 
+### Conditionner le comptage à l'état de la porte (`COUNT_ONLY_DOOR_OPEN`)
+
+```python
+COUNT_ONLY_DOOR_OPEN = False   # comportement par défaut : compter en toutes circonstances
+COUNT_ONLY_DOOR_OPEN = True    # ne compter que quand la porte est détectée ouverte
+```
+
+| Valeur | Comportement |
+| --- | --- |
+| `False` | Chaque franchissement de la ligne est enregistré, quel que soit l'état de la porte. Utile si la caméra couvre un couloir sans porte, ou si la détection de porte est désactivée. |
+| `True` | Un franchissement n'est enregistré que si `door_prev == "open"`. Évite de compter des mouvements derrière une porte fermée (ex. ombre, reflet). |
+
+> **Attention avec `True` :** le premier état de porte est inconnu au démarrage (`door_prev = ""`). Les passages qui surviennent avant la première détection d'état ne seront pas comptés. Attendre quelques secondes après le démarrage avant de faire circuler des personnes.
+
 ### Seuil de confiance de détection (`conf`)
 
 ```python
