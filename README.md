@@ -311,19 +311,55 @@ Pour recalibrer :
 
 La détection compare chaque frame à une **image de référence** (porte fermée) pixel par pixel dans la zone `DOOR_ROI`.
 
-| Paramètre | Défaut | Rôle |
+| Paramètre | Valeur | Rôle |
 | --- | --- | --- |
 | `DOOR_PIXEL_DIFF` | `30` | Différence minimale (0–255) pour qu'un pixel soit considéré "changé". Augmenter si l'éclairage fluctue. |
-| `DOOR_THRESHOLD` | `0.08` | Fraction (0.0–1.0) de pixels changés pour déclarer la porte ouverte. À `0.08`, il faut que 8 % des pixels du ROI aient changé. |
-| `DOOR_HYSTERESIS` | `8` | Nombre de frames **consécutives** avant de valider un changement d'état. Évite les transitions rapides dues à des passants. |
+| `DOOR_THRESHOLD` | `0.35` | Fraction (0.0–1.0) de pixels changés pour déclarer la porte ouverte. |
+| `DOOR_HYSTERESIS` | `25` | Nombre de frames **consécutives** avant de valider un changement d'état. |
 
-Réglage typique selon l'environnement :
+#### Pourquoi une personne qui passe déclenche un faux positif
+
+Le pipeline possède déjà une protection primaire : si YOLO détecte une personne dont la bounding box chevauche le `DOOR_ROI`, la comparaison de pixels est suspendue pour cette frame. Mais quand YOLO rate une détection (confiance insuffisante, personne partiellement hors cadre), la comparaison s'exécute et voit une silhouette là où la référence montrait une porte vide.
+
+La distinction entre une personne qui passe et une porte qui s'ouvre repose sur deux observations :
+
+```
+Personne qui passe devant une DOOR_ROI étroite (20 % de la largeur image)
+  → silhouette couvre ~20 % du ROI
+  → passage dure ~0.3–0.5 s  (9–15 frames à 30 fps)
+
+Porte réellement ouverte
+  → fond du couloir remplace toute la surface de la porte
+  → ~70–100 % du ROI change
+  → état maintenu plusieurs secondes
+```
+
+`DOOR_THRESHOLD = 0.35` : en demandant que 35 % des pixels aient changé, une silhouette (~20 %) ne suffit plus à déclencher "open". Une vraie ouverture (~70–100 %) la déclenche toujours.
+
+`DOOR_HYSTERESIS = 25` : à 30 fps, 25 frames = ~0.8 s. Un passage rapide (<0.5 s) ne cumule pas assez de frames consécutives. Une porte ouverte maintient l'état bien au-delà de 0.8 s.
+
+#### Calibrer ces valeurs sur site
+
+Pour trouver les bonnes valeurs, activer temporairement les logs de ratio en ajoutant dans `detect_door()` :
+
+```python
+print(f"[DOOR_RATIO] {changed_ratio:.3f}")
+```
+
+Puis mesurer :
+- `changed_ratio` quand une personne passe devant (sans ouvrir) → valeur **A**
+- `changed_ratio` quand la porte est ouverte → valeur **B**
+
+Régler `DOOR_THRESHOLD` entre A et B, avec une marge : `DOOR_THRESHOLD = A + (B - A) * 0.4`.
+
+Réglage selon l'environnement :
 
 | Environnement | `DOOR_PIXEL_DIFF` | `DOOR_THRESHOLD` | `DOOR_HYSTERESIS` |
 | --- | --- | --- | --- |
-| Éclairage stable | 20 | 0.05 | 5 |
-| Éclairage variable (soleil) | 40 | 0.12 | 10 |
-| Porte peu contrastée | 15 | 0.05 | 8 |
+| ROI étroit (≤ 20 % largeur), passages fréquents | 30 | 0.30–0.40 | 20–25 |
+| ROI large (≥ 40 % largeur) | 30 | 0.15–0.25 | 15–20 |
+| Éclairage variable (soleil direct) | 40–50 | 0.35–0.45 | 25–30 |
+| Porte peu contrastée / vitrée | 15–20 | 0.20–0.30 | 20 |
 
 ### Conditionner le comptage à l'état de la porte (`COUNT_ONLY_DOOR_OPEN`)
 
