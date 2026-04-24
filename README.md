@@ -408,6 +408,116 @@ Dans le dashboard (`people_counter.json`, panel "Présence actuelle estimée") :
 
 ---
 
+## Tuning de la détection YOLO — expériences de terrain
+
+### Symptôme : `tracks=0` malgré `détections=1`
+
+ByteTrack possède ses propres seuils internes, **indépendants** du paramètre `conf` de YOLO.
+Si les détections ont un score inférieur à `new_track_thresh` (défaut 0.25), ByteTrack refuse de créer un track — même si YOLO voit la personne.
+
+```
+[DBG 10:01:00.123] détections=1 tracks=0 conf=[0.11]   ← YOLO voit, ByteTrack ignore
+```
+
+**Cause :** `conf=0.10` (nécessaire pour vues latérales) + seuils ByteTrack par défaut à 0.25.
+
+**Solution :** le fichier `app/bytetrack_low.yaml` abaisse ces seuils pour les aligner sur `conf=0.10` :
+
+```yaml
+track_high_thresh: 0.10   # défaut 0.25
+new_track_thresh:  0.10   # défaut 0.25
+track_buffer:      45     # défaut 30 — compense les détections intermittentes
+```
+
+> **Règle :** `new_track_thresh` doit toujours être ≤ au `conf` passé à `model.track()`.
+
+---
+
+### Symptôme : personne détectée et trackée mais aucun `[EVENT]`
+
+**Cause la plus fréquente :** `cy` ne croise jamais `line_px`.
+
+Lire les logs `[TRACK]` pour mesurer la plage réelle de `cy` :
+
+```bash
+docker compose logs app | grep "\[TRACK" | awk '{print $4}' | sort -t= -k2 -n
+```
+
+Si tous les `cy` sont soit toujours **au-dessus**, soit toujours **en dessous** de `line_px`, la ligne est mal placée.
+
+**Méthode de recalibrage :**
+
+```
+1. Observer cy_min (person apparaît dans le champ) → ex. 338
+2. Observer cy_max (person sort du champ)          → ex. 426
+3. LINE_Y = (338 + 426) / 2 / hauteur_image
+           = 382 / 480 = 0.796  → arrondir à 0.79
+```
+
+**Exemple réel de cette installation :**
+
+| Mesure | Valeur observée |
+| --- | --- |
+| `cy` à l'entrée dans le champ | 338 |
+| `cy` à la sortie du champ | 426 |
+| `line_px` optimal | 382 (LINE_Y ≈ 0.79) |
+| Frame rate moyen YOLO | ~30 fps |
+| Conf de détection | 0.88–0.94 (vue latérale stable) |
+
+---
+
+### Symptôme : `COUNT_ONLY_DOOR_OPEN=True` bloque tous les passages
+
+**Cause :** `DOOR_HYSTERESIS` crée un délai avant que `door_prev` bascule sur `"open"`. La personne franchit la ligne **pendant** cette fenêtre d'attente — `door_prev` est encore `"closed"` au moment du franchissement.
+
+```
+[TRACK 09:25:10.200] id=14 cy=377 line=379   ← franchissement
+[DOOR  09:25:10.650] OPEN                    ← trop tard (+450 ms)
+→ EVENT bloqué car door_prev="closed" au moment du franchissement
+```
+
+**Analyse :** avec `DOOR_HYSTERESIS=25` (~0.8 s à 30 fps), si la personne traverse en moins de 0.8 s après l'ouverture, le comptage rate systématiquement.
+
+**Solution recommandée :** garder `COUNT_ONLY_DOOR_OPEN = False`. Le filtrage des faux positifs de porte repose sur `DOOR_THRESHOLD`, pas sur le couplage porte↔comptage. Les deux systèmes sont plus fiables séparément.
+
+> N'activer `COUNT_ONLY_DOOR_OPEN = True` que si la détection de porte est parfaitement stable **et** si les personnes passent lentement (DOOR_HYSTERESIS a le temps de se valider avant le franchissement).
+
+---
+
+### Symptôme : la porte oscille OPEN/CLOSED en continu
+
+La référence porte (capturée au démarrage) ne correspond plus à la scène actuelle : changement d'éclairage, caméra déplacée, objet dans le ROI.
+
+```bash
+# Porte fermée visible → recapturer
+docker compose exec app python /app/reset_reference.py
+```
+
+Si l'oscillation persiste après recapture, `DOOR_THRESHOLD` est trop bas pour l'environnement. Mesurer le ratio réel :
+
+```python
+# Ajouter temporairement dans detect_door() :
+print(f"[DOOR_RATIO {_ts()}] {changed_ratio:.3f}")
+```
+
+Observer les valeurs en idle (porte fermée, personne absente) → fixer `DOOR_THRESHOLD` légèrement au-dessus du bruit de fond mesuré.
+
+---
+
+### Cas limite : plusieurs personnes simultanées
+
+Le pipeline traite chaque track **indépendamment** — 1 sortie + 2 entrées simultanées génèrent bien 3 événements si YOLO distingue les 3 personnes.
+
+```
+[EVENT 09:30:01.100] OUT — track 42    ← personne qui sort
+[EVENT 09:30:01.103] IN  — track 43    ← 1ère personne qui entre
+[EVENT 09:30:01.103] IN  — track 44    ← 2ème personne qui entre
+```
+
+**Limite matérielle :** si deux personnes sont très proches dans l'embrasure (<0.5 m), YOLO peut fusionner leurs bounding boxes en une seule — le sous-comptage est alors inévitable avec une caméra monoculaire. Vérifier le champ `tracks=` dans les logs `[DBG]` pour savoir combien de personnes YOLO distingue réellement.
+
+---
+
 ## Optimisation TensorRT (optionnel)
 
 L'export TensorRT permet de passer de ~30 FPS à ~60 FPS sur Jetson Orin.
@@ -527,8 +637,14 @@ docker compose ps   # doit afficher "running" pour app et dashboard
 | `yolov8n.pt` ne se télécharge pas | Le conteneur n'a pas accès internet — suivre l'étape 4 : télécharger sur l'hôte puis `docker cp /tmp/yolov8n.pt people-counter-app-1:/data/` |
 | Grafana ne démarre pas | Vérifier les logs : `docker compose logs dashboard` — si erreur plugin, le répertoire `grafana/plugins/` doit être présent |
 | Grafana vide au démarrage | Attendre 15-20s, puis rafraîchir |
-| Fausses alarmes porte | Augmenter `DOOR_THRESHOLD` ou recapturer la référence |
+| `module.js` 404 dans les logs Grafana | Conflit volume nommé/bind mount — vérifier `GF_PATHS_PLUGINS=/grafana-plugins` et `./grafana/plugins:/grafana-plugins` dans `docker-compose.yml`, puis `docker compose up -d dashboard` |
+| Fausses alarmes porte | Augmenter `DOOR_THRESHOLD` ou recapturer la référence avec `reset_reference.py` |
+| Porte oscille OPEN/CLOSED en continu | Référence obsolète — recapturer avec `reset_reference.py` (porte bien fermée) |
+| `détections=1 tracks=0` dans les logs | `new_track_thresh` ByteTrack trop élevé — vérifier `app/bytetrack_low.yaml` |
+| Passages non comptés, `cy` toujours d'un côté | `LINE_Y` mal calibré — lire les `cy` dans les logs `[TRACK]` et recalculer (voir section Tuning) |
+| `COUNT_ONLY_DOOR_OPEN=True` ne compte rien | Délai hysteresis > temps de traversée — utiliser `False` ou réduire `DOOR_HYSTERESIS` |
 | Double comptage | Ajuster `LINE_Y` via le flux live `http://<ip>:8080` |
+| Sous-comptage groupes | YOLO fusionne les bbox proches — limite monoculaire, vérifier `tracks=` dans `[DBG]` |
 | Dashboard Grafana corrompu | Supprimer le volume et redémarrer : `docker compose down -v && docker compose up -d` |
 
 ---
