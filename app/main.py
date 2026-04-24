@@ -262,7 +262,7 @@ def main():
         results = model.track(
             frame,
             persist=True,
-            tracker="bytetrack.yaml",
+            tracker="/app/bytetrack_low.yaml",
             classes=[0],        # classe 0 = personne (COCO)
             conf=0.10,          # seuil abaissé pour vues plongeantes / petites détections
             verbose=False,

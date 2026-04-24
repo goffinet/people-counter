@@ -1,0 +1,7 @@
+tracker_type: bytetrack
+track_high_thresh: 0.10  # conf minimum pour suivi haute confiance (défaut 0.25)
+track_low_thresh: 0.05   # conf minimum pour suivi basse confiance (défaut 0.10)
+new_track_thresh: 0.10   # conf minimum pour créer un nouveau track (défaut 0.25)
+track_buffer: 45         # frames de rétention d'un track perdu (~1.5s à 30fps)
+match_thresh: 0.8
+fuse_score: True
