@@ -31,8 +31,8 @@ REF_PATH       = "/data/door_reference.pkl"
 RESET_SIGNAL   = "/data/.reset_reference"  # créé par reset_reference.py
 DEBUG_PORT     = 8080                    # 0 pour désactiver le serveur de visualisation
 
-LINE_Y              = 0.90               # ligne de comptage à x % de la hauteur
-DOOR_ROI            = (0.5, 0.1, 0.3, 0.9)  # ROI porte (à ajuster selon cadrage)
+LINE_Y              = 0.63             # ligne de comptage à x % de la hauteur
+DOOR_ROI            = (0.4, 0.1, 0.6, 0.9)  # ROI porte (à ajuster selon cadrage)
 DOOR_PIXEL_DIFF     = 30                 # diff par pixel pour le compter comme "changé" (0-255)
 DOOR_THRESHOLD      = 0.08              # fraction de pixels changés pour déclarer "open" (0.0-1.0)
 DOOR_HYSTERESIS     = 8                 # frames consécutives avant de valider un changement d'état
@@ -122,17 +122,33 @@ _debug_lock:  threading.Lock = threading.Lock()
 _debug_frame: bytes | None   = None
 
 
-def _annotate_debug(frame: np.ndarray, line_px: int) -> bytes:
+def _annotate_debug(frame: np.ndarray, line_px: int, boxes=None) -> bytes:
     h, w = frame.shape[:2]
     out = frame.copy()
+
+    # Ligne de comptage
     cv2.line(out, (0, line_px), (w, line_px), (0, 0, 255), 2)
     cv2.putText(out, f"LINE_Y={LINE_Y:.2f}", (10, line_px - 8),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
-    x1, y1 = int(DOOR_ROI[0] * w), int(DOOR_ROI[1] * h)
-    x2, y2 = int(DOOR_ROI[2] * w), int(DOOR_ROI[3] * h)
-    cv2.rectangle(out, (x1, y1), (x2, y2), (0, 255, 0), 2)
-    cv2.putText(out, f"DOOR_ROI={DOOR_ROI}", (x1, y1 - 8),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 255, 0), 2)
+
+    # ROI porte
+    rx1, ry1 = int(DOOR_ROI[0] * w), int(DOOR_ROI[1] * h)
+    rx2, ry2 = int(DOOR_ROI[2] * w), int(DOOR_ROI[3] * h)
+    cv2.rectangle(out, (rx1, ry1), (rx2, ry2), (0, 255, 0), 2)
+
+    # Boîtes de détection YOLO
+    if boxes is not None and boxes.xyxy is not None and len(boxes.xyxy) > 0:
+        ids   = boxes.id.int().cpu().tolist() if boxes.id is not None else [None] * len(boxes.xyxy)
+        confs = boxes.conf.cpu().tolist()
+        for (xyxy, tid, conf) in zip(boxes.xyxy.cpu().numpy(), ids, confs):
+            bx1, by1, bx2, by2 = int(xyxy[0]), int(xyxy[1]), int(xyxy[2]), int(xyxy[3])
+            cy = int((by1 + by2) / 2)
+            cv2.rectangle(out, (bx1, by1), (bx2, by2), (255, 165, 0), 2)
+            cv2.circle(out, (int((bx1 + bx2) / 2), cy), 5, (255, 165, 0), -1)
+            label = f"id={tid} cy={cy} conf={conf:.2f}"
+            cv2.putText(out, label, (bx1, by1 - 6),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 165, 0), 2)
+
     _, jpeg = cv2.imencode(".jpg", out, [cv2.IMWRITE_JPEG_QUALITY, 75])
     return jpeg.tobytes()
 
@@ -247,11 +263,22 @@ def main():
             persist=True,
             tracker="bytetrack.yaml",
             classes=[0],        # classe 0 = personne (COCO)
+            conf=0.10,          # seuil abaissé pour vues plongeantes / petites détections
             verbose=False,
         )
 
         boxes = results[0].boxes
         active_ids: set[int] = set()
+
+        # Diagnostic : affiche l'état des détections toutes les 60 frames
+        if not hasattr(main, '_dbg_frame_count'):
+            main._dbg_frame_count = 0
+        main._dbg_frame_count += 1
+        if main._dbg_frame_count % 60 == 0:
+            n_det = len(boxes.xyxy) if boxes is not None and boxes.xyxy is not None else 0
+            n_id  = len(boxes.id)   if boxes is not None and boxes.id  is not None else 0
+            confs = boxes.conf.cpu().tolist() if boxes is not None and boxes.conf is not None else []
+            print(f"[DBG] frame={main._dbg_frame_count} détections={n_det} tracks={n_id} line_px={line_px} conf={[round(c,2) for c in confs]}")
 
         if boxes is not None and boxes.id is not None:
             ids   = boxes.id.int().cpu().tolist()
@@ -260,6 +287,7 @@ def main():
             for tid, xyxy in zip(ids, xyxys):
                 active_ids.add(tid)
                 cy = float((xyxy[1] + xyxy[3]) / 2)
+                print(f"[TRACK] id={tid} cy={cy:.0f} line={line_px} conf={float(boxes.conf[ids.index(tid)]):.2f}")
 
                 if tid in prev_centers:
                     prev_cy = prev_centers[tid]
@@ -314,7 +342,7 @@ def main():
         if DEBUG_PORT:
             global _debug_frame
             with _debug_lock:
-                _debug_frame = _annotate_debug(frame, line_px)
+                _debug_frame = _annotate_debug(frame, line_px, boxes)
 
     cap.release()
     db.close()
