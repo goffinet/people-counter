@@ -294,6 +294,7 @@ def main():
                 active_ids.add(tid)
                 cy = float((xyxy[1] + xyxy[3]) / 2)
                 print(f"[TRACK {_ts()}] id={tid} cy={cy:.0f} line={line_px} conf={float(boxes.conf[ids.index(tid)]):.2f}")
+                direction = None
 
                 if tid in prev_centers:
                     prev_cy = prev_centers[tid]
@@ -302,8 +303,6 @@ def main():
                         direction = "in"
                     elif prev_cy > line_px >= cy:
                         direction = "out"
-                    else:
-                        direction = None
 
                     if direction and (not COUNT_ONLY_DOOR_OPEN or door_prev == "open"):
                         db.execute(
