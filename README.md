@@ -378,7 +378,21 @@ Un `tee` distribue le flux à deux branches indépendantes.
 
 ### Installation
 
-#### 1. Tirer l'image DeepStream
+#### 1. S'authentifier sur le registre NVIDIA NGC
+
+L'image DeepStream est hébergée sur `nvcr.io` et nécessite un compte NVIDIA NGC.
+
+1. Créer un compte sur [https://ngc.nvidia.com](https://ngc.nvidia.com)
+2. Générer une clé API : menu utilisateur → **Setup** → **Generate API Key**
+3. S'authentifier :
+
+```bash
+docker login nvcr.io
+# Username : $oauthtoken        ← littéralement cette chaîne
+# Password : <votre-clé-api>
+```
+
+#### 2. Tirer l'image DeepStream
 
 ```bash
 docker compose --profile deepstream pull
