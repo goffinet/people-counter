@@ -6,10 +6,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       python3-gi-cairo \
       gir1.2-gst-rtsp-server-1.0 \
       python3-gst-1.0 \
-      python3-opencv \
+      libpython3.10 \
  && rm -rf /var/lib/apt/lists/*
 
-# pyds — bindings Python DeepStream 7.0 / aarch64
-# Source : https://github.com/NVIDIA-AI-IOT/deepstream_python_apps/releases/tag/v1.1.8
+# opencv-python-headless : wheel auto-suffisant (bundlé ffmpeg — pas de dépendance système)
+# pyds 1.2.0 : bindings Python DeepStream pour Python 3.10 / aarch64
 RUN pip3 install --no-cache-dir \
-  https://github.com/NVIDIA-AI-IOT/deepstream_python_apps/releases/download/v1.1.8/pyds-1.1.8-py3-none-linux_aarch64.whl
+      opencv-python-headless \
+      https://github.com/NVIDIA-AI-IOT/deepstream_python_apps/releases/download/v1.2.0/pyds-1.2.0-cp310-cp310-linux_aarch64.whl
