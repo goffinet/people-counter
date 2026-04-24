@@ -34,10 +34,10 @@ DEBUG_PORT     = 8080                    # 0 pour désactiver le serveur de visu
 LINE_Y              = 0.63             # ligne de comptage à x % de la hauteur
 DOOR_ROI            = (0.4, 0.1, 0.6, 0.9)  # ROI porte (à ajuster selon cadrage)
 DOOR_PIXEL_DIFF     = 30                 # diff par pixel pour le compter comme "changé" (0-255)
-DOOR_THRESHOLD      = 0.08              # fraction de pixels changés pour déclarer "open" (0.0-1.0)
-DOOR_HYSTERESIS     = 8                 # frames consécutives avant de valider un changement d'état
+DOOR_THRESHOLD      = 0.35              # fraction de pixels changés pour déclarer "open" (0.0-1.0)
+DOOR_HYSTERESIS     = 25                # frames consécutives avant de valider un changement d'état
 REF_DELAY           = 3                 # secondes avant capture de la frame de référence
-COUNT_ONLY_DOOR_OPEN = False            # True = ne compter que quand la porte est ouverte
+COUNT_ONLY_DOOR_OPEN = True            # True = ne compter que quand la porte est ouverte
 
 # ---------------------------------------------------------------------------
 # Base de données
