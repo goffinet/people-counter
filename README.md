@@ -16,7 +16,7 @@ docker compose --profile deepstream  up -d   # PeopleNet v2.6 + NvDCF
 
 | Critère | YOLO (`--profile yolo`) | DeepStream (`--profile deepstream`) |
 | --- | --- | --- |
-| Image Docker | build local (`Dockerfile`) | `nvcr.io/nvidia/deepstream:7.0-samples` |
+| Image Docker | build local (`Dockerfile`) | `nvcr.io/nvidia/deepstream:9.0-samples-multiarch` |
 | Modèle | YOLOv8n (COCO) | PeopleNet v2.6 (ResNet34, dédié piétons) |
 | Tracker | ByteTrack (intégré Ultralytics) | NvDCF (production, robuste aux occlusions) |
 | Pipeline | Python + OpenCV | GStreamer + pyds (GPU bout en bout) |
@@ -468,10 +468,10 @@ NvDCF:
 | Symptôme | Solution |
 | --- | --- |
 | Démarrage lent (~5 min) | Normal au premier lancement — compilation TRT en cours |
-| `nvinfer` erreur modèle introuvable | Vérifier que l'image `deepstream:7.0-samples` est bien tirée |
+| `nvinfer` erreur modèle introuvable | Vérifier que l'image `deepstream:9.0-samples-multiarch` est bien tirée |
 | Pas de détection après démarrage | Vérifier `pre-cluster-threshold` dans `pgie_peoplenet.txt` |
-| Erreur `pyds` introuvable | S'assurer d'utiliser l'image `deepstream:7.0-samples` (pyds inclus) |
-| `GStreamer element not found` | L'image `7.0-samples` inclut tous les plugins — vérifier le tag |
+| Erreur `pyds` introuvable | S'assurer d'utiliser l'image `deepstream:9.0-samples-multiarch` (pyds inclus) |
+| `GStreamer element not found` | L'image `9.0-samples-multiarch` inclut tous les plugins — vérifier le tag |
 
 ---
 
@@ -615,7 +615,7 @@ docker compose --profile yolo ps
 | Symptôme | Solution |
 | --- | --- |
 | Démarrage lent (~5 min) | Normal au premier lancement — compilation TRT PeopleNet |
-| `nvinfer` erreur modèle introuvable | Vérifier que l'image `deepstream:7.0-samples` est bien tirée |
+| `nvinfer` erreur modèle introuvable | Vérifier que l'image `deepstream:9.0-samples-multiarch` est bien tirée |
 | Pas de détection | Abaisser `pre-cluster-threshold` dans `pgie_peoplenet.txt` |
 
 ---

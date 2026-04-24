@@ -1,8 +1,8 @@
 [property]
 gpu-id=0
 
-# Modèle PeopleNet v2.6 livré avec DeepStream 7 samples
-# Chemin dans l'image nvcr.io/nvidia/deepstream:7.0-samples
+# Modèle PeopleNet v2.6 livré avec DeepStream samples
+# Chemin dans l'image nvcr.io/nvidia/deepstream:9.0-samples-multiarch
 tlt-encoded-model=/opt/nvidia/deepstream/deepstream/samples/models/tao_pretrained_models/peoplenet/resnet34_peoplenet_int8.etlt
 tlt-model-key=tlt_encode
 

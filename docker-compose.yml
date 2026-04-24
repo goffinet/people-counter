@@ -32,7 +32,7 @@ services:
   # ---------------------------------------------------------------------------
   app-deepstream:
     profiles: [deepstream]
-    image: nvcr.io/nvidia/deepstream:7.0-samples
+    image: nvcr.io/nvidia/deepstream:9.0-samples-multiarch
     runtime: nvidia
     ipc: host
     environment:
