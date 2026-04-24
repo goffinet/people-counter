@@ -85,7 +85,6 @@ people-counter/
 │   └── lapx-*.whl             # dépendance ByteTrack pré-téléchargée (aarch64)
 ├── app/
 │   ├── main.py                # pipeline YOLOv8 + ByteTrack + serveur MJPEG (port 8080)
-│   ├── debug_view.py          # visualisation standalone (pipeline arrêté uniquement)
 │   ├── reset_reference.py     # recapture frame de référence porte
 │   └── export_tensorrt.py     # export moteur TensorRT (optionnel)
 └── grafana/
