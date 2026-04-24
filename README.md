@@ -205,38 +205,134 @@ Il se rafraîchit toutes les 5 secondes.
 
 ---
 
+## Comprendre la logique de détection
+
+### Système de coordonnées de l'image
+
+OpenCV (et donc ce pipeline) utilise un repère où **y=0 est en haut** de l'image et **y augmente vers le bas**.
+Pour une image de 480 pixels de haut :
+
+```
+y=0   ┌─────────────────────────────┐  ← haut de l'image
+      │                             │
+y=230 │  - - - - ligne rouge  - - - │  ← LINE_Y=0.48 → line_px=230
+      │                             │
+      │   ┌───────┐  ← bounding box │
+      │   │ conf  │     YOLO        │
+y=302 │   │  ● cy │  ← centre de   │  ← cy = (by1+by2)/2
+      │   └───────┘     la bbox     │
+      │                             │
+y=480 └─────────────────────────────┘  ← bas de l'image
+```
+
+Les valeurs clés du pipeline :
+
+| Variable | Type | Description |
+| --- | --- | --- |
+| `LINE_Y` | float 0.0–1.0 | Position de la ligne en **fraction** de la hauteur |
+| `line_px` | int (pixels) | `line_px = int(h * LINE_Y)` — calculé une seule fois au démarrage |
+| `cy` | float (pixels) | Centre vertical de la bounding box : `cy = (y_haut + y_bas) / 2` |
+
+### Comment un passage est compté
+
+À chaque frame, le pipeline mémorise `cy` par identifiant de track (`prev_centers[tid]`).
+Un franchissement est détecté quand `cy` passe **d'un côté à l'autre** de `line_px` entre deux frames consécutives :
+
+```
+prev_cy < line_px  ET  cy >= line_px  →  direction = "in"   (descend dans l'image)
+prev_cy > line_px  ET  cy <= line_px  →  direction = "out"  (remonte dans l'image)
+```
+
+Concrètement : si la caméra est placée **face à la porte** et regarde le couloir, une personne qui entre dans la salle s'approche de la caméra et son `cy` **augmente** (elle descend dans l'image). Elle passe donc de `cy < line_px` à `cy > line_px` → comptée **entrée**.
+
+> **Règle pratique :** la ligne doit couper la trajectoire de la personne entre sa position de départ (avant le seuil) et sa position d'arrivée (après le seuil). Si la personne est toujours du même côté de la ligne rouge dans le flux live, le comptage ne se déclenche pas.
+
+### Calibrer `LINE_Y` avec le flux de visualisation
+
+1. Ouvrir `http://<ip>:8080` dans un navigateur — le flux affiche en **orange** la bounding box détectée avec son `cy`, et en **rouge** la `LINE_Y` courante.
+2. Marcher devant la caméra en simulant un passage complet (entrer puis sortir).
+3. Observer les valeurs `cy` affichées à l'écran :
+   - Note le `cy` **avant** le seuil de la porte (ex. 285)
+   - Note le `cy` **après** le seuil (ex. 350)
+4. Placer `LINE_Y` entre ces deux valeurs : `LINE_Y = (285 + 350) / 2 / hauteur_image`
+5. Vérifier dans les logs que des lignes `[EVENT] IN` ou `[EVENT] OUT` apparaissent.
+
+Les logs utiles pendant le calibrage :
+
+```bash
+docker compose logs -f app | grep -E "TRACK|EVENT"
+# [TRACK] id=12 cy=290 line=302 conf=0.93   ← cy < line : personne pas encore passée
+# [TRACK] id=12 cy=335 line=302 conf=0.91   ← cy > line : personne passée → EVENT
+# [EVENT] IN — track 12
+```
+
+---
+
 ## Configuration
 
 ### Ligne de comptage (`LINE_Y`)
 
-Position de la ligne virtuelle en fraction de la hauteur de l'image.
-
 ```python
-LINE_Y = 0.5   # 0.5 = milieu de l'image
+LINE_Y = 0.63   # ligne à 63 % de la hauteur → line_px = 302 pour une image 480p
 ```
 
-Une personne qui descend (y croissant) en franchissant la ligne est comptée **entrée**.
-Une personne qui monte (y décroissant) est comptée **sortie**.
-Ajuster selon l'orientation de la caméra. Vérifier via `http://<ip>:8080`.
+Valeurs typiques selon l'installation :
+
+| Montage caméra | `LINE_Y` recommandé |
+| --- | --- |
+| Face à la porte, vue couloir | 0.55 – 0.70 (à calibrer) |
+| Au-dessus de la porte (vue plongeante) | 0.45 – 0.55 |
+| Caméra basse regardant vers le haut | 0.30 – 0.45 |
 
 ### Zone de détection porte (`DOOR_ROI`)
 
-Coordonnées en fractions de l'image `(x1, y1, x2, y2)`.
+`DOOR_ROI = (x1, y1, x2, y2)` — les quatre valeurs sont des **fractions** de la taille de l'image (0.0 à 1.0). L'origine (0, 0) est en **haut à gauche**.
 
-```python
-DOOR_ROI = (0.2, 0.1, 0.8, 0.9)  # valeur par défaut
+```
+(0,0) ──────────────────────── (1,0)
+  │                               │
+  │   x1,y1 ┌──────────┐         │
+  │          │  DOOR    │         │
+  │          │  ROI     │         │
+  │   x1,y2 └──────────┘ x2,y2   │
+  │                               │
+(0,1) ──────────────────────── (1,1)
 ```
 
-Vérifier que le rectangle vert couvre bien la porte via `http://<ip>:8080`.
+Exemple : `DOOR_ROI = (0.6, 0.1, 0.8, 0.9)` couvre la bande verticale entre 60 % et 80 % de la largeur, de 10 % à 90 % de la hauteur.
 
-### Sensibilité détection porte (`DOOR_THRESHOLD`)
+**Important :** `x1 < x2` et `y1 < y2` — toujours mettre la coordonnée la plus petite en premier. Le rectangle vert visible sur le flux live correspond exactement à cette zone.
+
+Pour recalibrer :
+1. Regarder le flux `http://<ip>:8080` — le rectangle vert doit couvrir la porte entière.
+2. Modifier `DOOR_ROI` dans `app/main.py`, redémarrer avec `docker compose restart app`.
+3. Recapturer la référence porte (porte fermée) : `docker compose exec app python /app/reset_reference.py`.
+
+### Détection porte : paramètres fins
+
+La détection compare chaque frame à une **image de référence** (porte fermée) pixel par pixel dans la zone `DOOR_ROI`.
+
+| Paramètre | Défaut | Rôle |
+| --- | --- | --- |
+| `DOOR_PIXEL_DIFF` | `30` | Différence minimale (0–255) pour qu'un pixel soit considéré "changé". Augmenter si l'éclairage fluctue. |
+| `DOOR_THRESHOLD` | `0.08` | Fraction (0.0–1.0) de pixels changés pour déclarer la porte ouverte. À `0.08`, il faut que 8 % des pixels du ROI aient changé. |
+| `DOOR_HYSTERESIS` | `8` | Nombre de frames **consécutives** avant de valider un changement d'état. Évite les transitions rapides dues à des passants. |
+
+Réglage typique selon l'environnement :
+
+| Environnement | `DOOR_PIXEL_DIFF` | `DOOR_THRESHOLD` | `DOOR_HYSTERESIS` |
+| --- | --- | --- | --- |
+| Éclairage stable | 20 | 0.05 | 5 |
+| Éclairage variable (soleil) | 40 | 0.12 | 10 |
+| Porte peu contrastée | 15 | 0.05 | 8 |
+
+### Seuil de confiance de détection (`conf`)
 
 ```python
-DOOR_THRESHOLD = 25   # valeur par défaut
+conf=0.10   # dans model.track() — app/main.py
 ```
 
-- Augmenter (40-60) si l'éclairage est variable → moins de fausses alarmes
-- Diminuer (10-15) si la porte est peu visible dans l'image
+YOLOv8 filtre les détections dont le score est inférieur à ce seuil. La valeur par défaut Ultralytics est `0.25`, mais des vues en angle nécessitent souvent `0.10`–`0.15`. En dessous de `0.10`, le risque de faux positifs (détection d'objets non-personnes) augmente.
 
 ### Modèle de détection (`MODEL_PATH`)
 
