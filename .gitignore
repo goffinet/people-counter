@@ -1,0 +1,13 @@
+# Binaires plugin Grafana non nécessaires sur Jetson (linux/arm64)
+grafana/plugins/*/gpx_*_darwin_*
+grafana/plugins/*/gpx_*_windows_*
+grafana/plugins/*/gpx_*_freebsd_*
+grafana/plugins/*/gpx_*_linux_amd64
+grafana/plugins/*/gpx_*_linux_arm
+
+# Données runtime (volumes Docker)
+data/
+
+# Cache Python
+__pycache__/
+*.pyc
