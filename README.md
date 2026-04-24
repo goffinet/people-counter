@@ -3,68 +3,35 @@
 Système de comptage de personnes et de surveillance de porte par caméra USB,
 déployé en conteneurs Docker sur ASUS IoT PE1103N (NVIDIA Jetson Orin, JetPack 6.x).
 
-Stack de détection : **YOLOv8n + ByteTrack (Ultralytics)**
+Deux stacks de détection coexistent dans ce dépôt, sélectionnables via un profil Docker Compose.
 
 ---
 
-## Branches
+## Choisir sa stack
 
-| Branche | Stack de détection | Image Docker |
+```bash
+docker compose --profile yolo        up -d   # YOLOv8n + ByteTrack
+docker compose --profile deepstream  up -d   # PeopleNet v2.6 + NvDCF
+```
+
+| Critère | YOLO (`--profile yolo`) | DeepStream (`--profile deepstream`) |
 | --- | --- | --- |
-| **`feature/yolo`** | **YOLOv8n + ByteTrack (Ultralytics)** | **`people-counter-app:latest` (build local)** |
-| `feature/nanoowl` | OWL-ViT TensorRT + tracker IoU (NanoOWL) | `dustynv/nanoowl:r36.4.0` |
-| `feature/deepstream` | PeopleNet v2.6 + NvDCF (DeepStream 7) | `nvcr.io/nvidia/deepstream:7.0-samples` |
+| Image Docker | build local (`Dockerfile`) | `nvcr.io/nvidia/deepstream:7.0-samples` |
+| Modèle | YOLOv8n (COCO) | PeopleNet v2.6 (ResNet34, dédié piétons) |
+| Tracker | ByteTrack (intégré Ultralytics) | NvDCF (production, robuste aux occlusions) |
+| Pipeline | Python + OpenCV | GStreamer + pyds (GPU bout en bout) |
+| FPS Jetson Orin | ~30 (PyTorch) / ~60 (TRT) | le plus élevé (INT8 GPU) |
+| Démarrage à froid | immédiat | ~5 min (compilation moteur TRT) |
+| Visualisation live | MJPEG sur port 8080 | image fixe `/data/roi_check.png` |
+| Complexité | faible | élevée |
 
-`main` est la branche d'intégration neutre (code partagé uniquement).
-
----
-
-## Comparaison des stacks de détection
-
-### Performance et complexité
-
-| Critère | `feature/yolo` | `feature/nanoowl` | `feature/deepstream` |
-| --- | --- | --- | --- |
-| FPS (Jetson Orin) | ~30 (PyTorch) / ~60 (TRT) | ~8-15 | le plus élevé (pipeline GPU INT8) |
-| Démarrage à froid | immédiat | construction moteur TRT (~15 min) | compilation moteur (~5 min) |
-| Complexité du code | faible (Python + OpenCV) | moyenne (Python + OpenCV + HF) | élevée (GStreamer + DeepStream + pyds) |
-| Accès caméra | OpenCV `VideoCapture` | OpenCV `VideoCapture` | GStreamer `v4l2src` (exclusif) |
-
-### Détection et tracking
-
-| Critère | `feature/yolo` | `feature/nanoowl` | `feature/deepstream` |
-| --- | --- | --- | --- |
-| Modèle | YOLOv8n (COCO) | OWL-ViT base patch32 | PeopleNet v2.6 (ResNet34) |
-| Vocabulaire | fixe — classe `person` (COCO) | **ouvert — prompt texte libre** | fixe — `person / bag / face` |
-| Réentraînement | non | **non** (prompt suffisant) | non |
-| Tracker | ByteTrack (intégré Ultralytics) | IoU greedy (minimal) | **NvDCF (production, robuste aux occlusions)** |
-| Précision piétons | bonne | variable selon threshold | **optimisée** (modèle dédié) |
-
-### Quand choisir quelle branche
-
-**`feature/yolo`** — le point de départ naturel.
-Déploiement immédiat, écosystème bien documenté, performances suffisantes pour la majorité des installations. Exporter le moteur TensorRT (`export_tensorrt.py`) pour doubler les FPS en production.
-
-**`feature/nanoowl`** — si le vocabulaire "personne" ne suffit pas.
-Permet de détecter par description textuelle sans réentraîner de modèle : `"a person in a hard hat"`, `"a security agent"`, etc. Contrepartie : FPS plus faible et étape de build obligatoire avant le premier démarrage.
-
-**`feature/deepstream`** — pour la production et la haute fiabilité.
-Pipeline entièrement GPU (GStreamer + TensorRT INT8), modèle PeopleNet spécialement entraîné pour la détection de piétons, tracker NvDCF robuste aux occultations partielles. Architecture plus complexe, mais la plus proche d'un déploiement industriel.
+**Règle de choix :**
+- Commencer par **YOLO** : déploiement immédiat, calibrage visuel live, écosystème bien documenté.
+- Passer à **DeepStream** pour la production et la haute fiabilité : pipeline entièrement GPU, modèle PeopleNet spécialisé piétons, tracker NvDCF robuste aux occultations partielles.
 
 ---
 
-## Fonctionnalités
-
-- Comptage entrées / sorties par ligne virtuelle (YOLOv8n + ByteTrack)
-- Détection visuelle de l'état de la porte (ouverte / fermée) par différence de frames
-- Persistance des événements dans SQLite
-- Dashboard Grafana temps réel (rafraîchissement 5s)
-- Alertes email : porte ouverte > 5 min, salle en suroccupation
-- Visualisation live pour calibrage (flux MJPEG sur port 8080)
-
----
-
-## Prérequis
+## Prérequis communs
 
 | Élément | Version requise |
 | --- | --- |
@@ -73,20 +40,43 @@ Pipeline entièrement GPU (GStreamer + TensorRT INT8), modèle PeopleNet spécia
 | NVIDIA Container Toolkit | ≥ 1.14 |
 | Webcam USB | Trust Trino sur `/dev/video0` |
 
+### Vérifier le runtime NVIDIA
+
+```bash
+sudo nvidia-ctk runtime configure --runtime=docker --set-as-default
+sudo systemctl restart docker
+cat /etc/docker/daemon.json
+# doit contenir : "default-runtime": "nvidia"
+```
+
+### Vérifier l'accès à la caméra
+
+```bash
+ls -la /dev/video0
+sudo usermod -aG video $USER
+# se déconnecter / reconnecter pour appliquer le groupe
+```
+
 ---
 
 ## Structure du projet
 
 ```text
 people-counter/
-├── Dockerfile                 # image dérivée ultralytics + lapx (ByteTrack)
-├── docker-compose.yml
+├── Dockerfile                         # image YOLO (build local)
+├── docker-compose.yml                 # profils yolo / deepstream
 ├── wheels/
-│   └── lapx-*.whl             # dépendance ByteTrack pré-téléchargée (aarch64)
+│   └── lapx-*.whl                     # dépendance ByteTrack (aarch64, hors ligne)
 ├── app/
-│   ├── main.py                # pipeline YOLOv8 + ByteTrack + serveur MJPEG (port 8080)
-│   ├── reset_reference.py     # recapture frame de référence porte
-│   └── export_tensorrt.py     # export moteur TensorRT (optionnel)
+│   ├── main.py                        # pipeline YOLO + ByteTrack + MJPEG (port 8080)
+│   ├── deepstream_main.py             # pipeline DeepStream + GStreamer
+│   ├── bytetrack_low.yaml             # config ByteTrack (seuils abaissés pour conf=0.10)
+│   ├── reset_reference.py             # recapture frame de référence porte
+│   ├── export_tensorrt.py             # export moteur TensorRT YOLO (optionnel)
+│   └── config/                        # (DeepStream uniquement)
+│       ├── pgie_peoplenet.txt         # config nvinfer PeopleNet
+│       ├── tracker_nvdcf.yml          # config tracker NvDCF
+│       └── peoplenet_labels.txt       # labels des classes
 └── grafana/
     ├── plugins/
     │   └── frser-sqlite-datasource/   # plugin SQLite pré-installé (hors ligne)
@@ -102,32 +92,11 @@ people-counter/
 
 ---
 
-## Installation et mise en service
+## Stack YOLO — YOLOv8n + ByteTrack
 
-### 1. Choisir la branche feature
+### Installation
 
-```bash
-git checkout feature/yolo
-```
-
-### 2. Vérifier le runtime NVIDIA
-
-```bash
-sudo nvidia-ctk runtime configure --runtime=docker --set-as-default
-sudo systemctl restart docker
-cat /etc/docker/daemon.json
-# doit contenir : "default-runtime": "nvidia"
-```
-
-### 3. Vérifier l'accès à la caméra
-
-```bash
-ls -la /dev/video0
-sudo usermod -aG video $USER
-# se déconnecter / reconnecter pour appliquer le groupe
-```
-
-### 4. Télécharger le modèle YOLOv8n
+#### 1. Télécharger le modèle YOLOv8n
 
 Le conteneur n'a pas accès internet. Télécharger le modèle depuis l'hôte :
 
@@ -136,20 +105,18 @@ curl -L https://github.com/ultralytics/assets/releases/download/v8.4.0/yolov8n.p
      -o /tmp/yolov8n.pt
 ```
 
-Il sera copié dans le volume `/data` au premier `docker compose up`.
-
-### 5. Construire l'image et démarrer la stack
+#### 2. Construire l'image et démarrer
 
 ```bash
-docker compose build          # construit people-counter-app:latest (~2 min)
-docker compose up -d
-docker cp /tmp/yolov8n.pt people-counter-app-1:/data/yolov8n.pt
+docker compose --profile yolo build
+docker compose --profile yolo up -d
+docker cp /tmp/yolov8n.pt people-counter-app-yolo-1:/data/yolov8n.pt
 ```
 
 > Le plugin Grafana SQLite (`frser-sqlite-datasource`) est fourni dans `grafana/plugins/`
-> et chargé localement — aucun accès internet requis pour Grafana.
+> et chargé localement — aucun accès internet requis.
 
-### 6. Calibrer la ligne de comptage et le ROI porte
+#### 3. Calibrer la ligne de comptage et le ROI porte
 
 Le serveur de visualisation démarre automatiquement avec le pipeline.
 Ouvrir dans un navigateur :
@@ -159,123 +126,44 @@ http://<ip-du-pe1103n>:8080
 ```
 
 Le flux live affiche :
-- **Ligne rouge** = position de `LINE_Y` (ligne virtuelle de comptage)
-- **Rectangle vert** = zone `DOOR_ROI` (zone analysée pour détecter la porte)
+- **Ligne rouge** = position de `LINE_Y`
+- **Rectangle vert** = zone `DOOR_ROI`
+- **Boîtes oranges** = détections YOLO avec `id`, `cy` et `conf`
 
-**Récupérer une image fixe :**
+Récupérer une image fixe :
 
 ```bash
 curl http://<ip-du-pe1103n>:8080/snapshot -o snapshot.jpg
 ```
 
-Une fois les valeurs correctes identifiées, les modifier dans `app/main.py` :
-
-```python
-LINE_Y   = 0.4
-DOOR_ROI = (0.15, 0.05, 0.85, 0.95)
-```
-
-Puis redémarrer le pipeline :
+Une fois les valeurs identifiées, les modifier dans `app/main.py`, puis redémarrer :
 
 ```bash
-docker compose restart app
+docker compose --profile yolo restart app-yolo
 ```
 
-### 7. Capturer la référence porte (porte fermée)
-
-La frame de référence sert à détecter si la porte est ouverte ou fermée.
-Elle est capturée automatiquement au premier démarrage.
-Pour la recapturer manuellement (après un changement d'éclairage par exemple) :
+#### 4. Capturer la référence porte (porte fermée)
 
 ```bash
 # S'assurer que la porte est bien FERMÉE avant d'exécuter
-docker compose exec app python /app/reset_reference.py
+docker compose exec app-yolo python /app/reset_reference.py
 ```
 
-La nouvelle référence est sauvegardée dans `/data/door_reference.pkl`
-et une image de vérification dans `/data/roi_check.png`.
-
-### 8. Vérifier le dashboard Grafana
-
-Grafana est accessible sur `http://<ip-du-pe1103n>:3000`
-
-Le dashboard **"Compteur de personnes"** s'affiche directement (accès anonyme activé).
-Il se rafraîchit toutes les 5 secondes.
-
----
-
-## Comprendre la logique de détection
-
-### Système de coordonnées de l'image
-
-OpenCV (et donc ce pipeline) utilise un repère où **y=0 est en haut** de l'image et **y augmente vers le bas**.
-Pour une image de 480 pixels de haut :
+#### 5. Vérifier le dashboard Grafana
 
 ```
-y=0   ┌─────────────────────────────┐  ← haut de l'image
-      │                             │
-y=230 │  - - - - ligne rouge  - - - │  ← LINE_Y=0.48 → line_px=230
-      │                             │
-      │   ┌───────┐  ← bounding box │
-      │   │ conf  │     YOLO        │
-y=302 │   │  ● cy │  ← centre de   │  ← cy = (by1+by2)/2
-      │   └───────┘     la bbox     │
-      │                             │
-y=480 └─────────────────────────────┘  ← bas de l'image
-```
-
-Les valeurs clés du pipeline :
-
-| Variable | Type | Description |
-| --- | --- | --- |
-| `LINE_Y` | float 0.0–1.0 | Position de la ligne en **fraction** de la hauteur |
-| `line_px` | int (pixels) | `line_px = int(h * LINE_Y)` — calculé une seule fois au démarrage |
-| `cy` | float (pixels) | Centre vertical de la bounding box : `cy = (y_haut + y_bas) / 2` |
-
-### Comment un passage est compté
-
-À chaque frame, le pipeline mémorise `cy` par identifiant de track (`prev_centers[tid]`).
-Un franchissement est détecté quand `cy` passe **d'un côté à l'autre** de `line_px` entre deux frames consécutives :
-
-```
-prev_cy < line_px  ET  cy >= line_px  →  direction = "in"   (descend dans l'image)
-prev_cy > line_px  ET  cy <= line_px  →  direction = "out"  (remonte dans l'image)
-```
-
-Concrètement : si la caméra est placée **face à la porte** et regarde le couloir, une personne qui entre dans la salle s'approche de la caméra et son `cy` **augmente** (elle descend dans l'image). Elle passe donc de `cy < line_px` à `cy > line_px` → comptée **entrée**.
-
-> **Règle pratique :** la ligne doit couper la trajectoire de la personne entre sa position de départ (avant le seuil) et sa position d'arrivée (après le seuil). Si la personne est toujours du même côté de la ligne rouge dans le flux live, le comptage ne se déclenche pas.
-
-### Calibrer `LINE_Y` avec le flux de visualisation
-
-1. Ouvrir `http://<ip>:8080` dans un navigateur — le flux affiche en **orange** la bounding box détectée avec son `cy`, et en **rouge** la `LINE_Y` courante.
-2. Marcher devant la caméra en simulant un passage complet (entrer puis sortir).
-3. Observer les valeurs `cy` affichées à l'écran :
-   - Note le `cy` **avant** le seuil de la porte (ex. 285)
-   - Note le `cy` **après** le seuil (ex. 350)
-4. Placer `LINE_Y` entre ces deux valeurs : `LINE_Y = (285 + 350) / 2 / hauteur_image`
-5. Vérifier dans les logs que des lignes `[EVENT] IN` ou `[EVENT] OUT` apparaissent.
-
-Les logs utiles pendant le calibrage :
-
-```bash
-docker compose logs -f app | grep -E "TRACK|EVENT"
-# [TRACK] id=12 cy=290 line=302 conf=0.93   ← cy < line : personne pas encore passée
-# [TRACK] id=12 cy=335 line=302 conf=0.91   ← cy > line : personne passée → EVENT
-# [EVENT] IN — track 12
+http://<ip-du-pe1103n>:3000
 ```
 
 ---
 
-## Configuration
+### Configuration YOLO
 
-### Ligne de comptage (`LINE_Y`)
+#### Ligne de comptage (`LINE_Y`)
 
 ```python
-LINE_Y = 0.63   # ligne à 63 % de la hauteur → line_px = 302 pour une image 480p
+LINE_Y = 0.79   # ligne à 79 % de la hauteur (calibrée sur cette installation)
 ```
-
-Valeurs typiques selon l'installation :
 
 | Montage caméra | `LINE_Y` recommandé |
 | --- | --- |
@@ -283,76 +171,163 @@ Valeurs typiques selon l'installation :
 | Au-dessus de la porte (vue plongeante) | 0.45 – 0.55 |
 | Caméra basse regardant vers le haut | 0.30 – 0.45 |
 
-### Zone de détection porte (`DOOR_ROI`)
+#### Zone de détection porte (`DOOR_ROI`)
 
-`DOOR_ROI = (x1, y1, x2, y2)` — les quatre valeurs sont des **fractions** de la taille de l'image (0.0 à 1.0). L'origine (0, 0) est en **haut à gauche**.
+`DOOR_ROI = (x1, y1, x2, y2)` — fractions de l'image (0.0 à 1.0), origine en haut à gauche.
+Toujours mettre `x1 < x2` et `y1 < y2`.
 
-```
-(0,0) ──────────────────────── (1,0)
-  │                               │
-  │   x1,y1 ┌──────────┐         │
-  │          │  DOOR    │         │
-  │          │  ROI     │         │
-  │   x1,y2 └──────────┘ x2,y2   │
-  │                               │
-(0,1) ──────────────────────── (1,1)
+```python
+DOOR_ROI = (0.6, 0.1, 0.8, 0.9)   # bande verticale 60–80 % de la largeur
 ```
 
-Exemple : `DOOR_ROI = (0.6, 0.1, 0.8, 0.9)` couvre la bande verticale entre 60 % et 80 % de la largeur, de 10 % à 90 % de la hauteur.
-
-**Important :** `x1 < x2` et `y1 < y2` — toujours mettre la coordonnée la plus petite en premier. Le rectangle vert visible sur le flux live correspond exactement à cette zone.
-
-Pour recalibrer :
-1. Regarder le flux `http://<ip>:8080` — le rectangle vert doit couvrir la porte entière.
-2. Modifier `DOOR_ROI` dans `app/main.py`, redémarrer avec `docker compose restart app`.
-3. Recapturer la référence porte (porte fermée) : `docker compose exec app python /app/reset_reference.py`.
-
-### Détection porte : paramètres fins
-
-La détection compare chaque frame à une **image de référence** (porte fermée) pixel par pixel dans la zone `DOOR_ROI`.
+#### Détection porte — paramètres fins
 
 | Paramètre | Valeur | Rôle |
 | --- | --- | --- |
-| `DOOR_PIXEL_DIFF` | `30` | Différence minimale (0–255) pour qu'un pixel soit considéré "changé". Augmenter si l'éclairage fluctue. |
-| `DOOR_THRESHOLD` | `0.35` | Fraction (0.0–1.0) de pixels changés pour déclarer la porte ouverte. |
-| `DOOR_HYSTERESIS` | `25` | Nombre de frames **consécutives** avant de valider un changement d'état. |
+| `DOOR_PIXEL_DIFF` | `30` | Différence minimale (0–255) pour qu'un pixel soit "changé" |
+| `DOOR_THRESHOLD` | `0.35` | Fraction (0.0–1.0) de pixels changés pour déclarer la porte ouverte |
+| `DOOR_HYSTERESIS` | `20` | Frames consécutives avant de valider un changement d'état |
 
-#### Pourquoi une personne qui passe déclenche un faux positif
-
-Le pipeline possède déjà une protection primaire : si YOLO détecte une personne dont la bounding box chevauche le `DOOR_ROI`, la comparaison de pixels est suspendue pour cette frame. Mais quand YOLO rate une détection (confiance insuffisante, personne partiellement hors cadre), la comparaison s'exécute et voit une silhouette là où la référence montrait une porte vide.
-
-La distinction entre une personne qui passe et une porte qui s'ouvre repose sur deux observations :
-
-```
-Personne qui passe devant une DOOR_ROI étroite (20 % de la largeur image)
-  → silhouette couvre ~20 % du ROI
-  → passage dure ~0.3–0.5 s  (9–15 frames à 30 fps)
-
-Porte réellement ouverte
-  → fond du couloir remplace toute la surface de la porte
-  → ~70–100 % du ROI change
-  → état maintenu plusieurs secondes
-```
-
-`DOOR_THRESHOLD = 0.35` : en demandant que 35 % des pixels aient changé, une silhouette (~20 %) ne suffit plus à déclencher "open". Une vraie ouverture (~70–100 %) la déclenche toujours.
-
-`DOOR_HYSTERESIS = 25` : à 30 fps, 25 frames = ~0.8 s. Un passage rapide (<0.5 s) ne cumule pas assez de frames consécutives. Une porte ouverte maintient l'état bien au-delà de 0.8 s.
-
-#### Calibrer ces valeurs sur site
-
-Pour trouver les bonnes valeurs, activer temporairement les logs de ratio en ajoutant dans `detect_door()` :
+#### Comptage conditionné à la porte (`COUNT_ONLY_DOOR_OPEN`)
 
 ```python
-print(f"[DOOR_RATIO] {changed_ratio:.3f}")
+COUNT_ONLY_DOOR_OPEN = False   # compter en toutes circonstances (recommandé)
+COUNT_ONLY_DOOR_OPEN = True    # ne compter que quand la porte est détectée ouverte
 ```
 
-Puis mesurer :
-- `changed_ratio` quand une personne passe devant (sans ouvrir) → valeur **A**
-- `changed_ratio` quand la porte est ouverte → valeur **B**
+> **Attention avec `True` :** le délai `DOOR_HYSTERESIS` peut masquer les franchissements rapides.
+> Voir la section Tuning pour le détail.
 
-Régler `DOOR_THRESHOLD` entre A et B, avec une marge : `DOOR_THRESHOLD = A + (B - A) * 0.4`.
+#### Seuil de confiance YOLO (`conf`)
 
-Réglage selon l'environnement :
+```python
+conf=0.10   # dans model.track() — app/main.py
+```
+
+La valeur par défaut Ultralytics est `0.25`, mais des vues latérales nécessitent souvent `0.10`–`0.15`.
+
+#### Modèle (`MODEL_PATH`)
+
+```python
+MODEL_PATH = "/data/yolov8n.pt"     # PyTorch — copié dans /data au démarrage
+MODEL_PATH = "/data/yolov8n.engine" # TensorRT — après export (voir section Optimisation)
+```
+
+---
+
+### Comprendre la logique de détection YOLO
+
+#### Système de coordonnées
+
+OpenCV utilise un repère où **y=0 est en haut** et **y augmente vers le bas**.
+
+```
+y=0   ┌─────────────────────────────┐  ← haut de l'image
+      │                             │
+y=230 │  - - - - ligne rouge  - - - │  ← LINE_Y=0.48 → line_px=230
+      │                             │
+      │   ┌───────┐                 │
+      │   │       │     YOLO bbox   │
+y=302 │   │  ● cy │  ← cy = (by1+by2)/2
+      │   └───────┘                 │
+      │                             │
+y=480 └─────────────────────────────┘  ← bas de l'image
+```
+
+#### Condition de franchissement
+
+```
+prev_cy < line_px  ET  cy >= line_px  →  "in"   (descend dans l'image)
+prev_cy > line_px  ET  cy <= line_px  →  "out"  (remonte dans l'image)
+```
+
+#### Calibrer `LINE_Y` depuis les logs
+
+```bash
+docker compose logs app-yolo | grep "\[TRACK" | awk '{print $4}' | sort -t= -k2 -n
+```
+
+Méthode :
+
+```
+1. cy_min (personne apparaît dans le champ) → ex. 338
+2. cy_max (personne sort du champ)          → ex. 426
+3. LINE_Y = (338 + 426) / 2 / hauteur_image = 382 / 480 = 0.796 → 0.79
+```
+
+Vérification en temps réel :
+
+```bash
+docker compose logs -f app-yolo | grep -E "TRACK|EVENT"
+# [TRACK 10:01:05.230] id=12 cy=290 line=302   ← pas encore passé
+# [TRACK 10:01:05.263] id=12 cy=335 line=302   ← passé → EVENT
+# [EVENT 10:01:05.263] IN — track 12
+```
+
+---
+
+### Tuning de la détection YOLO — expériences de terrain
+
+#### Symptôme : `tracks=0` malgré `détections=1`
+
+ByteTrack possède des seuils internes indépendants du paramètre `conf` de YOLO.
+Si les détections ont un score inférieur à `new_track_thresh` (défaut 0.25), ByteTrack refuse de créer un track.
+
+```
+[DBG 10:01:00.123] détections=1 tracks=0 conf=[0.11]
+```
+
+**Solution :** `app/bytetrack_low.yaml` abaisse ces seuils :
+
+```yaml
+track_high_thresh: 0.10   # défaut 0.25
+new_track_thresh:  0.10   # défaut 0.25 — doit être ≤ conf passé à model.track()
+track_buffer:      45     # défaut 30 — compense les détections intermittentes
+```
+
+#### Symptôme : personne trackée mais aucun `[EVENT]`
+
+`cy` ne croise jamais `line_px`. Recalibrer `LINE_Y` avec la méthode ci-dessus.
+
+**Exemple réel de cette installation :**
+
+| Mesure | Valeur |
+| --- | --- |
+| `cy` à l'entrée dans le champ | 338 |
+| `cy` à la sortie du champ | 426 |
+| `line_px` optimal | 382 (LINE_Y = 0.79) |
+| Conf détection | 0.88–0.94 (vue latérale stable) |
+
+#### Symptôme : `COUNT_ONLY_DOOR_OPEN=True` bloque tous les passages
+
+`DOOR_HYSTERESIS=25` ≈ 0.8 s → la personne franchit la ligne pendant la fenêtre d'attente.
+
+```
+[TRACK 09:25:10.200] id=14 cy=377 line=379   ← franchissement
+[DOOR  09:25:10.650] OPEN                    ← trop tard (+450 ms)
+→ EVENT bloqué car door_prev="closed"
+```
+
+**Solution :** garder `COUNT_ONLY_DOOR_OPEN = False`. Le filtrage des faux positifs repose sur `DOOR_THRESHOLD`.
+
+#### Symptôme : la porte oscille OPEN/CLOSED en continu
+
+La référence est obsolète (éclairage changé, caméra déplacée).
+
+```bash
+docker compose exec app-yolo python /app/reset_reference.py
+```
+
+Si l'oscillation persiste, `DOOR_THRESHOLD` est trop bas. Mesurer le ratio réel :
+
+```python
+# Ajouter temporairement dans detect_door() :
+print(f"[DOOR_RATIO {_ts()}] {changed_ratio:.3f}")
+```
+
+Observer les valeurs porte fermée → fixer `DOOR_THRESHOLD` légèrement au-dessus du bruit.
+
+#### Réglage `DOOR_THRESHOLD` / `DOOR_HYSTERESIS` selon l'environnement
 
 | Environnement | `DOOR_PIXEL_DIFF` | `DOOR_THRESHOLD` | `DOOR_HYSTERESIS` |
 | --- | --- | --- | --- |
@@ -361,36 +336,138 @@ Réglage selon l'environnement :
 | Éclairage variable (soleil direct) | 40–50 | 0.35–0.45 | 25–30 |
 | Porte peu contrastée / vitrée | 15–20 | 0.20–0.30 | 20 |
 
-### Conditionner le comptage à l'état de la porte (`COUNT_ONLY_DOOR_OPEN`)
+#### Cas limite : plusieurs personnes simultanées
 
-```python
-COUNT_ONLY_DOOR_OPEN = False   # comportement par défaut : compter en toutes circonstances
-COUNT_ONLY_DOOR_OPEN = True    # ne compter que quand la porte est détectée ouverte
+Le pipeline traite chaque track indépendamment — 1 sortie + 2 entrées génèrent bien 3 événements.
+Limite : si deux personnes sont très proches, YOLO peut fusionner leurs bboxes. Vérifier `tracks=` dans `[DBG]`.
+
+---
+
+### Optimisation TensorRT (optionnel)
+
+L'export TensorRT permet de passer de ~30 FPS à ~60 FPS sur Jetson Orin.
+
+```bash
+docker compose exec app-yolo python /app/export_tensorrt.py
 ```
 
-| Valeur | Comportement |
+La compilation dure 5–10 minutes. Ensuite, modifier `MODEL_PATH` dans `app/main.py` :
+
+```python
+MODEL_PATH = "/data/yolov8n.engine"
+```
+
+```bash
+docker compose --profile yolo restart app-yolo
+```
+
+---
+
+## Stack DeepStream — PeopleNet v2.6 + NvDCF
+
+### Architecture du pipeline
+
+```
+v4l2src ─┬─ queue → videoconvert → appsink          [détection porte, CPU]
+          └─ queue → nvvideoconvert → nvinfer
+                     → nvtracker → probe             [comptage personnes, GPU]
+```
+
+La caméra n'est ouverte qu'**une seule fois** par GStreamer (`v4l2src`).
+Un `tee` distribue le flux à deux branches indépendantes.
+
+### Installation
+
+#### 1. Tirer l'image DeepStream
+
+```bash
+docker compose --profile deepstream pull
+```
+
+#### 2. Démarrer
+
+```bash
+docker compose --profile deepstream up -d
+```
+
+**Premier démarrage :** `nvinfer` compile le modèle PeopleNet en moteur TensorRT INT8.
+Durée : ~5 min sur Jetson Orin. Le moteur est mis en cache dans `/data/models/`.
+
+#### 3. Vérifier le ROI porte
+
+```bash
+# Copier l'image de vérification générée au démarrage
+docker compose cp app-deepstream:/data/roi_check.png ./roi_check.png
+```
+
+L'image montre le rectangle vert (`DOOR_ROI`) et la ligne rouge (`LINE_Y`) superposés à la scène.
+Si le placement ne convient pas, ajuster `LINE_Y` et `DOOR_ROI` dans `app/deepstream_main.py` et redémarrer.
+
+#### 4. Recapturer la référence porte
+
+La caméra est verrouillée par GStreamer. La recapture s'effectue via signal UNIX sans redémarrer :
+
+```bash
+# Porte bien FERMÉE, puis :
+docker compose exec app-deepstream python3 /app/reset_reference.py
+```
+
+`reset_reference.py` envoie `SIGUSR1` au processus principal, qui recapture la prochaine frame.
+
+### Configuration DeepStream
+
+#### Ligne de comptage et zone porte
+
+Dans `app/deepstream_main.py` :
+
+```python
+LINE_Y         = 0.5              # fraction de hauteur (à calibrer)
+DOOR_ROI       = (0.2, 0.1, 0.8, 0.9)
+DOOR_THRESHOLD = 25               # différence moyenne (0–255) pour "open"
+```
+
+#### Seuil de détection PeopleNet
+
+Dans `app/config/pgie_peoplenet.txt` :
+
+```ini
+[class-attrs-0]
+pre-cluster-threshold=0.4   # confiance minimale pour la classe "person"
+```
+
+- Augmenter (0.6–0.8) pour réduire les faux positifs
+- Diminuer (0.2–0.3) si des personnes ne sont pas détectées
+
+#### Tracker NvDCF
+
+Dans `app/config/tracker_nvdcf.yml` :
+
+```yaml
+NvDCF:
+  probationAge: 3         # frames avant de valider une piste
+  keepLostFrameNum: 0     # suppression immédiate après disparition
+  maxTargetsPerStream: 30
+```
+
+### Dépannage DeepStream
+
+| Symptôme | Solution |
 | --- | --- |
-| `False` | Chaque franchissement de la ligne est enregistré, quel que soit l'état de la porte. Utile si la caméra couvre un couloir sans porte, ou si la détection de porte est désactivée. |
-| `True` | Un franchissement n'est enregistré que si `door_prev == "open"`. Évite de compter des mouvements derrière une porte fermée (ex. ombre, reflet). |
+| Démarrage lent (~5 min) | Normal au premier lancement — compilation TRT en cours |
+| `nvinfer` erreur modèle introuvable | Vérifier que l'image `deepstream:7.0-samples` est bien tirée |
+| Pas de détection après démarrage | Vérifier `pre-cluster-threshold` dans `pgie_peoplenet.txt` |
+| Erreur `pyds` introuvable | S'assurer d'utiliser l'image `deepstream:7.0-samples` (pyds inclus) |
+| `GStreamer element not found` | L'image `7.0-samples` inclut tous les plugins — vérifier le tag |
 
-> **Attention avec `True` :** le premier état de porte est inconnu au démarrage (`door_prev = ""`). Les passages qui surviennent avant la première détection d'état ne seront pas comptés. Attendre quelques secondes après le démarrage avant de faire circuler des personnes.
+---
 
-### Seuil de confiance de détection (`conf`)
+## Dashboard Grafana
 
-```python
-conf=0.10   # dans model.track() — app/main.py
-```
+Commun aux deux stacks. Accessible sur `http://<ip-du-pe1103n>:3000` (accès anonyme).
 
-YOLOv8 filtre les détections dont le score est inférieur à ce seuil. La valeur par défaut Ultralytics est `0.25`, mais des vues en angle nécessitent souvent `0.10`–`0.15`. En dessous de `0.10`, le risque de faux positifs (détection d'objets non-personnes) augmente.
+Le dashboard **"Compteur de personnes"** se rafraîchit toutes les 5 secondes.
 
-### Modèle de détection (`MODEL_PATH`)
-
-```python
-MODEL_PATH = "/data/yolov8n.pt"     # PyTorch — copié dans /data au démarrage (étape 4)
-MODEL_PATH = "/data/yolov8n.engine" # TensorRT — après export (voir section Optimisation)
-```
-
-### Seuils d'alerte Grafana
+### Seuils d'alerte
 
 Dans `grafana/provisioning/alerting/door_alert.yaml` :
 
@@ -406,143 +483,7 @@ Dans le dashboard (`people_counter.json`, panel "Présence actuelle estimée") :
 { "color": "red",    "value": 20 }
 ```
 
----
-
-## Tuning de la détection YOLO — expériences de terrain
-
-### Symptôme : `tracks=0` malgré `détections=1`
-
-ByteTrack possède ses propres seuils internes, **indépendants** du paramètre `conf` de YOLO.
-Si les détections ont un score inférieur à `new_track_thresh` (défaut 0.25), ByteTrack refuse de créer un track — même si YOLO voit la personne.
-
-```
-[DBG 10:01:00.123] détections=1 tracks=0 conf=[0.11]   ← YOLO voit, ByteTrack ignore
-```
-
-**Cause :** `conf=0.10` (nécessaire pour vues latérales) + seuils ByteTrack par défaut à 0.25.
-
-**Solution :** le fichier `app/bytetrack_low.yaml` abaisse ces seuils pour les aligner sur `conf=0.10` :
-
-```yaml
-track_high_thresh: 0.10   # défaut 0.25
-new_track_thresh:  0.10   # défaut 0.25
-track_buffer:      45     # défaut 30 — compense les détections intermittentes
-```
-
-> **Règle :** `new_track_thresh` doit toujours être ≤ au `conf` passé à `model.track()`.
-
----
-
-### Symptôme : personne détectée et trackée mais aucun `[EVENT]`
-
-**Cause la plus fréquente :** `cy` ne croise jamais `line_px`.
-
-Lire les logs `[TRACK]` pour mesurer la plage réelle de `cy` :
-
-```bash
-docker compose logs app | grep "\[TRACK" | awk '{print $4}' | sort -t= -k2 -n
-```
-
-Si tous les `cy` sont soit toujours **au-dessus**, soit toujours **en dessous** de `line_px`, la ligne est mal placée.
-
-**Méthode de recalibrage :**
-
-```
-1. Observer cy_min (person apparaît dans le champ) → ex. 338
-2. Observer cy_max (person sort du champ)          → ex. 426
-3. LINE_Y = (338 + 426) / 2 / hauteur_image
-           = 382 / 480 = 0.796  → arrondir à 0.79
-```
-
-**Exemple réel de cette installation :**
-
-| Mesure | Valeur observée |
-| --- | --- |
-| `cy` à l'entrée dans le champ | 338 |
-| `cy` à la sortie du champ | 426 |
-| `line_px` optimal | 382 (LINE_Y ≈ 0.79) |
-| Frame rate moyen YOLO | ~30 fps |
-| Conf de détection | 0.88–0.94 (vue latérale stable) |
-
----
-
-### Symptôme : `COUNT_ONLY_DOOR_OPEN=True` bloque tous les passages
-
-**Cause :** `DOOR_HYSTERESIS` crée un délai avant que `door_prev` bascule sur `"open"`. La personne franchit la ligne **pendant** cette fenêtre d'attente — `door_prev` est encore `"closed"` au moment du franchissement.
-
-```
-[TRACK 09:25:10.200] id=14 cy=377 line=379   ← franchissement
-[DOOR  09:25:10.650] OPEN                    ← trop tard (+450 ms)
-→ EVENT bloqué car door_prev="closed" au moment du franchissement
-```
-
-**Analyse :** avec `DOOR_HYSTERESIS=25` (~0.8 s à 30 fps), si la personne traverse en moins de 0.8 s après l'ouverture, le comptage rate systématiquement.
-
-**Solution recommandée :** garder `COUNT_ONLY_DOOR_OPEN = False`. Le filtrage des faux positifs de porte repose sur `DOOR_THRESHOLD`, pas sur le couplage porte↔comptage. Les deux systèmes sont plus fiables séparément.
-
-> N'activer `COUNT_ONLY_DOOR_OPEN = True` que si la détection de porte est parfaitement stable **et** si les personnes passent lentement (DOOR_HYSTERESIS a le temps de se valider avant le franchissement).
-
----
-
-### Symptôme : la porte oscille OPEN/CLOSED en continu
-
-La référence porte (capturée au démarrage) ne correspond plus à la scène actuelle : changement d'éclairage, caméra déplacée, objet dans le ROI.
-
-```bash
-# Porte fermée visible → recapturer
-docker compose exec app python /app/reset_reference.py
-```
-
-Si l'oscillation persiste après recapture, `DOOR_THRESHOLD` est trop bas pour l'environnement. Mesurer le ratio réel :
-
-```python
-# Ajouter temporairement dans detect_door() :
-print(f"[DOOR_RATIO {_ts()}] {changed_ratio:.3f}")
-```
-
-Observer les valeurs en idle (porte fermée, personne absente) → fixer `DOOR_THRESHOLD` légèrement au-dessus du bruit de fond mesuré.
-
----
-
-### Cas limite : plusieurs personnes simultanées
-
-Le pipeline traite chaque track **indépendamment** — 1 sortie + 2 entrées simultanées génèrent bien 3 événements si YOLO distingue les 3 personnes.
-
-```
-[EVENT 09:30:01.100] OUT — track 42    ← personne qui sort
-[EVENT 09:30:01.103] IN  — track 43    ← 1ère personne qui entre
-[EVENT 09:30:01.103] IN  — track 44    ← 2ème personne qui entre
-```
-
-**Limite matérielle :** si deux personnes sont très proches dans l'embrasure (<0.5 m), YOLO peut fusionner leurs bounding boxes en une seule — le sous-comptage est alors inévitable avec une caméra monoculaire. Vérifier le champ `tracks=` dans les logs `[DBG]` pour savoir combien de personnes YOLO distingue réellement.
-
----
-
-## Optimisation TensorRT (optionnel)
-
-L'export TensorRT permet de passer de ~30 FPS à ~60 FPS sur Jetson Orin.
-À effectuer une seule fois après le premier démarrage réussi.
-
-```bash
-docker compose exec app python /app/export_tensorrt.py
-```
-
-La compilation dure 5 à 10 minutes. Une fois terminée, modifier `MODEL_PATH`
-dans `app/main.py` :
-
-```python
-MODEL_PATH = "/data/yolov8n.engine"
-```
-
-Puis redémarrer :
-
-```bash
-docker compose restart app
-```
-
----
-
-## Alertes email
+### Alertes email
 
 Décommenter et adapter les variables SMTP dans `docker-compose.yml` :
 
@@ -561,34 +502,36 @@ Modifier l'adresse destinataire dans `grafana/provisioning/alerting/door_alert.y
 addresses: admin@votredomaine.com
 ```
 
-Redémarrer le dashboard pour appliquer :
-
 ```bash
-docker compose restart dashboard
+docker compose --profile <yolo|deepstream> restart dashboard
 ```
 
 ---
 
 ## Maintenance
 
-### Recapturer la frame de référence (porte fermée)
+### Recapturer la frame de référence porte
 
 ```bash
-# Assurez-vous que la porte est fermée avant de lancer
-docker compose exec app python /app/reset_reference.py
+# YOLO
+docker compose exec app-yolo python /app/reset_reference.py
+
+# DeepStream (via SIGUSR1 — sans redémarrer le pipeline)
+docker compose exec app-deepstream python3 /app/reset_reference.py
 ```
 
 ### Vérifier les logs
 
 ```bash
-docker compose logs -f app        # pipeline vision
-docker compose logs -f dashboard  # Grafana
+docker compose --profile yolo       logs -f app-yolo
+docker compose --profile deepstream logs -f app-deepstream
+docker compose --profile yolo       logs -f dashboard
 ```
 
 ### Compter les événements depuis la base
 
 ```bash
-docker compose exec app python3 -c "
+docker compose exec app-yolo python3 -c "
 import sqlite3
 con = sqlite3.connect('/data/counts.db')
 for row in con.execute('SELECT direction, count(*) FROM events GROUP BY direction'):
@@ -599,7 +542,7 @@ for row in con.execute('SELECT direction, count(*) FROM events GROUP BY directio
 ### Remettre les compteurs à zéro
 
 ```bash
-docker compose exec app python3 -c "
+docker compose exec app-yolo python3 -c "
 import sqlite3
 con = sqlite3.connect('/data/counts.db')
 con.execute('DELETE FROM events')
@@ -614,8 +557,9 @@ print('Base remise à zéro.')
 
 ```bash
 # crontab -e
-0 3 * * 0 docker compose -f /chemin/vers/docker-compose.yml exec -T app \
-  python3 -c "import sqlite3; sqlite3.connect('/data/counts.db').execute('VACUUM')"
+0 3 * * 0 docker compose --profile yolo -f /chemin/vers/docker-compose.yml \
+  exec -T app-yolo python3 -c \
+  "import sqlite3; con=sqlite3.connect('/data/counts.db'); con.execute('VACUUM')"
 ```
 
 ### Vérifier la persistance après reboot
@@ -623,29 +567,42 @@ print('Base remise à zéro.')
 ```bash
 sudo reboot
 # après redémarrage
-docker compose ps   # doit afficher "running" pour app et dashboard
+docker compose --profile yolo ps
 ```
 
 ---
 
-## Dépannage
+## Dépannage général
 
 | Symptôme | Solution |
 | --- | --- |
 | `CUDA: False` dans le conteneur | Vérifier `--runtime nvidia` et `daemon.json` |
 | Caméra non détectée | Vérifier droits groupe `video` et `devices:` dans compose |
-| `yolov8n.pt` ne se télécharge pas | Le conteneur n'a pas accès internet — suivre l'étape 4 : télécharger sur l'hôte puis `docker cp /tmp/yolov8n.pt people-counter-app-1:/data/` |
-| Grafana ne démarre pas | Vérifier les logs : `docker compose logs dashboard` — si erreur plugin, le répertoire `grafana/plugins/` doit être présent |
-| Grafana vide au démarrage | Attendre 15-20s, puis rafraîchir |
-| `module.js` 404 dans les logs Grafana | Conflit volume nommé/bind mount — vérifier `GF_PATHS_PLUGINS=/grafana-plugins` et `./grafana/plugins:/grafana-plugins` dans `docker-compose.yml`, puis `docker compose up -d dashboard` |
-| Fausses alarmes porte | Augmenter `DOOR_THRESHOLD` ou recapturer la référence avec `reset_reference.py` |
-| Porte oscille OPEN/CLOSED en continu | Référence obsolète — recapturer avec `reset_reference.py` (porte bien fermée) |
-| `détections=1 tracks=0` dans les logs | `new_track_thresh` ByteTrack trop élevé — vérifier `app/bytetrack_low.yaml` |
-| Passages non comptés, `cy` toujours d'un côté | `LINE_Y` mal calibré — lire les `cy` dans les logs `[TRACK]` et recalculer (voir section Tuning) |
-| `COUNT_ONLY_DOOR_OPEN=True` ne compte rien | Délai hysteresis > temps de traversée — utiliser `False` ou réduire `DOOR_HYSTERESIS` |
+| Grafana ne démarre pas | `docker compose logs dashboard` — vérifier `GF_PATHS_PLUGINS=/grafana-plugins` |
+| Grafana vide au démarrage | Attendre 15–20 s, puis rafraîchir |
+| `module.js` 404 dans les logs Grafana | Conflit volume — vérifier `GF_PATHS_PLUGINS` et `./grafana/plugins:/grafana-plugins` |
+| Fausses alarmes porte | Augmenter `DOOR_THRESHOLD` ou recapturer la référence |
+| Porte oscille OPEN/CLOSED en continu | Référence obsolète — recapturer (porte bien fermée) |
+| Dashboard Grafana corrompu | `docker compose down -v && docker compose --profile <stack> up -d` |
+
+**YOLO uniquement :**
+
+| Symptôme | Solution |
+| --- | --- |
+| `détections=1 tracks=0` | `new_track_thresh` ByteTrack trop élevé — vérifier `bytetrack_low.yaml` |
+| Passages non comptés, `cy` constant | `LINE_Y` mal calibré — lire `cy` dans `[TRACK]` et recalculer |
+| `COUNT_ONLY_DOOR_OPEN=True` ne compte rien | Délai hysteresis > temps de traversée — utiliser `False` |
+| `yolov8n.pt` absent | Copier manuellement : `docker cp /tmp/yolov8n.pt people-counter-app-yolo-1:/data/` |
 | Double comptage | Ajuster `LINE_Y` via le flux live `http://<ip>:8080` |
 | Sous-comptage groupes | YOLO fusionne les bbox proches — limite monoculaire, vérifier `tracks=` dans `[DBG]` |
-| Dashboard Grafana corrompu | Supprimer le volume et redémarrer : `docker compose down -v && docker compose up -d` |
+
+**DeepStream uniquement :**
+
+| Symptôme | Solution |
+| --- | --- |
+| Démarrage lent (~5 min) | Normal au premier lancement — compilation TRT PeopleNet |
+| `nvinfer` erreur modèle introuvable | Vérifier que l'image `deepstream:7.0-samples` est bien tirée |
+| Pas de détection | Abaisser `pre-cluster-threshold` dans `pgie_peoplenet.txt` |
 
 ---
 
@@ -654,4 +611,4 @@ docker compose ps   # doit afficher "running" pour app et dashboard
 - Aucune image n'est stockée — uniquement les timestamps et directions de passage
 - La détection de porte ne stocke que l'état (open/closed) et l'horodatage
 - Exposer Grafana uniquement sur le réseau local (ne pas ouvrir le port 3000 sur internet)
-- Le port 8080 (visualisation live) est destiné à la phase de calibrage uniquement — le fermer en production si non nécessaire
+- Le port 8080 (visualisation live YOLO) est destiné au calibrage uniquement — le fermer en production

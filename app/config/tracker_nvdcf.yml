@@ -1,0 +1,18 @@
+%YAML:1.0
+# Tracker NvDCF — profil performance (Jetson Orin)
+# Référence : /opt/nvidia/deepstream/deepstream/samples/configs/deepstream-app/config_tracker_NvDCF_perf.yml
+
+NvDCF:
+  useHardwareBatch: 1       # batch GPU activé
+  useColorNames: 1          # descripteur couleur (précision ↑)
+  useHog: 0                 # HOG désactivé (vitesse ↑)
+
+  minDetectorConfidence: 0  # délégué au seuil nvinfer (class-attrs-0)
+  minTrackerConfidence: 0.1
+
+  # Durée de vie des pistes
+  probationAge: 3           # frames avant de valider une piste
+  keepLostFrameNum: 0       # frames conservées après disparition (0 = suppression immédiate)
+
+  # Limites
+  maxTargetsPerStream: 30

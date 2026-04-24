@@ -1,5 +1,11 @@
 services:
-  app:
+
+  # ---------------------------------------------------------------------------
+  # Stack YOLO — YOLOv8n + ByteTrack (Ultralytics)
+  # Démarrer : docker compose --profile yolo up -d
+  # ---------------------------------------------------------------------------
+  app-yolo:
+    profiles: [yolo]
     build:
       context: .
       network: host
@@ -20,7 +26,30 @@ services:
     command: python /app/main.py
     restart: unless-stopped
 
+  # ---------------------------------------------------------------------------
+  # Stack DeepStream — PeopleNet v2.6 + NvDCF (DeepStream 7)
+  # Démarrer : docker compose --profile deepstream up -d
+  # ---------------------------------------------------------------------------
+  app-deepstream:
+    profiles: [deepstream]
+    image: nvcr.io/nvidia/deepstream:7.0-samples
+    runtime: nvidia
+    ipc: host
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+    devices:
+      - /dev/video0:/dev/video0
+    volumes:
+      - ./app:/app
+      - data:/data
+    command: python3 /app/deepstream_main.py
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # Dashboard Grafana — commun aux deux stacks
+  # ---------------------------------------------------------------------------
   dashboard:
+    profiles: [yolo, deepstream]
     image: grafana/grafana:10.4.8
     ports:
       - "3000:3000"
